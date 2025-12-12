@@ -2,6 +2,10 @@
 name = "model-checker"
 version = "0.1.0"
 edition = "2024"
+links = ""
 
 [dependencies]
-#cc = "1.0"
+cxx = "1.0.190"
+
+[build-dependencies]
+cxx-build = "1.0"

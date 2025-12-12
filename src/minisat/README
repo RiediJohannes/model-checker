@@ -16,7 +16,7 @@ version. Please use MiniSat v1.12b if you need this. Other changes are
 special treatment of binary clauses for efficiency (messes up the code
 a bit, but gives quite a speedup), improved variable order (still
 VSIDS based, but works MUCH better than in previous MiniSat
-versions!), conflict clause minimization (by Niklas Sörensson), and a
+versions!), conflict clause minimization (by Niklas S?rensson), and a
 better Main module (for those of you who use MiniSat as a stand-alone
 solver).
 
