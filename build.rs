@@ -23,5 +23,5 @@ fn main() {
     // println!("cargo:rustc-link-search=native=clib");
     // println!("cargo:rustc-link-clib=static=minisat");
 
-    // g++ -ffloat-store -std=gnu++98 -O3 File.C Main.C Proof.C Solver.C -lz -o minisat
+    // g++ -ffloat-store -std=gnu++11 -O3 File.C Main.C Proof.C Solver.C -lz -o minisat
 }
