@@ -2,7 +2,12 @@
 name = "model-checker"
 version = "0.1.0"
 edition = "2024"
+authors = ["Johannes Riedmann"]
 links = ""
+
+[[bin]]
+name = "bmc"
+path = "src/main.rs"
 
 [dependencies]
 cxx = "1.0.190"
