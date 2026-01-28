@@ -10,7 +10,7 @@ name = "bmc"
 path = "src/main.rs"
 
 [dependencies]
-cxx = "1.0.190"
+cxx = "1.0"
 
 [build-dependencies]
 cxx-build = "1.0"
