@@ -11,8 +11,9 @@ fn main() {
         .file("src/minisat/Proof.C")
         .file("src/minisat/Solver.C")
         .file("src/minisat/Test.C")
+        .file("src/minisat/Api.C")
         .std("gnu++11")  // max-version for minisat 1.14 AND min-version for CXX bridge
-        .flag("-O3")
+        // .flag("-O3")
         .flag("-ffloat-store")
         .flag("-Wno-unused-result")
         .flag("-Wno-unused-parameter")
@@ -26,6 +27,8 @@ fn main() {
     println!("cargo:rerun-if-changed=src/minisat/Solver.C");
     println!("cargo:rerun-if-changed=src/minisat/Proof.C");
     println!("cargo:rerun-if-changed=src/minisat/Test.C");
+    println!("cargo:rerun-if-changed=src/minisat/Api.C");
 
+    // Compile manually
     // g++ -ffloat-store -std=gnu++11 -O3 File.C Main.C Proof.C Solver.C -lz -o minisat
 }

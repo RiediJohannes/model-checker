@@ -16,17 +16,26 @@ pub mod minisat {
     // }
 
     unsafe extern "C++" {
-        include!("minisat/Solver.h");
         include!("minisat/Test.h");
 
-        // Zero or more opaque types which both languages can pass around but
-        // only C++ can see the fields.
-        type Solver;
-        type FileMode;
+        fn addInts(a: i32, b: i32) -> i32;
+
+        include!("minisat/Api.h");
+
+        // Opaque types which both languages can pass around but only C++ can see the fields
+        type SolverStub;
 
         // Functions implemented in C++.
-        // fn new_blobstore_client() -> UniquePtr<BlobstoreClient>;
+        fn new_solver() -> UniquePtr<SolverStub>;
+        // fn new_solver_pin() -> SolverStub;
 
-        fn addInts(a: i32, b: i32) -> i32;
+        // fn solve(self: &BlobstoreClient) -> bool;
+        fn solve(self: Pin<&mut SolverStub>) -> bool;
+
+        // fn new_var(solver: Pin<&mut SolverStub>) -> i32;
+        // fn solve(solver: Pin<&mut SolverStub>) -> bool;
+        // fn model_value(solver: Pin<&mut SolverStub>, var: i32) -> i32;
+
+        // self: &BlobstoreClient
     }
 }

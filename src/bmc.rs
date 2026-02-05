@@ -1,21 +1,20 @@
 mod aiger;
 
 use aiger::{AIG, ParseError};
-use crate::interop::minisat::addInts;
 
 pub fn load_instance(name: &str) -> Result<BmcInstance, ParseError> {
     let aig = aiger::parse_aiger_ascii(name)?;
 
     Ok(BmcInstance {
         name: name.to_string(),
-        graph: aig
+        graph: aig,
     })
 }
 
 #[derive(Debug)]
 pub enum ModelCheckingConclusion {
     Ok,
-    Fail
+    Fail,
 }
 
 pub struct BmcInstance {
@@ -34,20 +33,22 @@ impl BmcInstance {
     }
 
     fn unwind(self: BmcInstance, k: u64) -> UnwoundBmcInstance {
-        let x = addInts(3,4);
-        UnwoundBmcInstance { base: self, k, cnf: String::new()}
+        UnwoundBmcInstance {
+            base: self,
+            k,
+            cnf: String::new(),
+        }
     }
 }
 
 pub struct UnwoundBmcInstance {
     base: BmcInstance,
     k: u64,
-    cnf: String
+    cnf: String,
 }
 
 impl UnwoundBmcInstance {
     pub fn check(&mut self) -> ModelCheckingConclusion {
-        
         ModelCheckingConclusion::Ok
     }
 }
