@@ -4,3 +4,5 @@
 clib
 build
 *.mak
+/aiger-tools
+/aiger-generate
