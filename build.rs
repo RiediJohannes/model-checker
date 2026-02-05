@@ -11,7 +11,7 @@ fn main() {
         .file("src/minisat/Proof.C")
         .file("src/minisat/Solver.C")
         .file("src/minisat/Test.C")
-        .std("gnu++11")
+        .std("gnu++11")  // max-version for minisat 1.14 AND min-version for CXX bridge
         .flag("-O3")
         .flag("-ffloat-store")
         .flag("-Wno-unused-result")

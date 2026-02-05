@@ -20,7 +20,6 @@ pub enum ParseError {
 
 
 #[derive(Debug)]
-#[allow(unused)]
 pub struct AIG {
     pub max_idx: u32,
     pub inputs: Vec<u32>,
@@ -30,7 +29,6 @@ pub struct AIG {
 }
 
 #[derive(Debug)]
-#[allow(unused)]
 pub struct AndGate {
     pub out: u32,
     pub in1: u32,
@@ -38,7 +36,6 @@ pub struct AndGate {
 }
 
 #[derive(Debug)]
-#[allow(unused)]
 pub struct Latch {
     pub out: u32,
     pub next: u32,
