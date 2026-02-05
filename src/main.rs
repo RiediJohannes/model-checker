@@ -19,5 +19,6 @@ fn main() {
     // Call a function of the minisat module through the C++ FFI
     println!("{}", minisat::addInts(1, 2));
 
-    let aiger = bmc::load_instance("data/flop.aag");
+    let aiger = bmc::load_instance("data/combination.aag");
+    println!("{:?}", aiger);
 }

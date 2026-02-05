@@ -1,84 +1,118 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum ParseError {
+    #[error("Failed to parse integer: {0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
+
+    #[error("Missing field in input")]
+    MissingField,
+
+    #[error("Invalid file format: Expected header tag 'aag', got '{0}'")]
+    InvalidHeaderTag(String),
+
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+}
+
+
 #[derive(Debug)]
-pub struct Aiger {
-    pub max_var: u32,
+#[allow(unused)]
+pub struct AIG {
+    pub max_idx: u32,
     pub inputs: Vec<u32>,
-    pub latches: Vec<(u32, u32)>,
+    pub latches: Vec<Latch>,
     pub outputs: Vec<u32>,
     pub and_gates: Vec<AndGate>,
 }
 
 #[derive(Debug)]
+#[allow(unused)]
 pub struct AndGate {
-    pub lhs: u32,
-    pub rhs0: u32,
-    pub rhs1: u32,
+    pub out: u32,
+    pub in1: u32,
+    pub in2: u32,
 }
 
-pub fn parse_aiger_ascii(path: &str) -> Aiger {
-    let file = File::open(path).unwrap();
+#[derive(Debug)]
+#[allow(unused)]
+pub struct Latch {
+    pub out: u32,
+    pub next: u32,
+}
+
+pub fn parse_aiger_ascii(path: &str) -> Result<AIG, ParseError> {
+    let file = File::open(path)?;
     let mut lines = BufReader::new(file).lines();
 
     // Header: aag M I L O A
-    let header = lines.next().unwrap().unwrap();
-    let parts: Vec<u32> = header
-        .split_whitespace()
-        .skip(1)
-        .map(|s| s.parse().unwrap())
-        .collect();
+    let header = lines.next().unwrap()?;
+    let mut fields = header.split_whitespace();
 
-    let max_var = parts[0];
-    let num_inputs = parts[1];
-    let num_latches = parts[2];
-    let num_outputs = parts[3];
-    let num_ands = parts[4];
+    // Assert the first field is "aag"
+    match fields.next() {
+        Some("aag") => {}
+        Some(tag) => return Err(ParseError::InvalidHeaderTag(tag.to_string())),
+        None => return Err(ParseError::MissingField),
+    }
+
+    // M I L O A
+    let max_idx: u32 = fields.next().ok_or(ParseError::MissingField)?.parse()?;
+    let num_inputs: u32 = fields.next().ok_or(ParseError::MissingField)?.parse()?;
+    let num_latches: u32 = fields.next().ok_or(ParseError::MissingField)?.parse()?;
+    let num_outputs: u32 = fields.next().ok_or(ParseError::MissingField)?.parse()?;
+    let num_ands: u32 = fields.next().ok_or(ParseError::MissingField)?.parse()?;
 
     // Inputs
-    let mut inputs = Vec::with_capacity(num_inputs as usize);
-    for _ in 0..num_inputs {
-        let lit = lines.next().unwrap().unwrap().parse().unwrap();
-        inputs.push(lit);
-    }
+    // Parse inputs
+    let inputs: Vec<u32> = (&mut lines)
+        .take(num_inputs as usize)
+        .map(|line| line?.parse().map_err(ParseError::from))
+        .collect::<Result<_, _>>()?;
 
-    // Latches
-    let mut latches = Vec::with_capacity(num_latches as usize);
-    for _ in 0..num_latches {
-        let line = lines.next().unwrap().unwrap();
-        let mut it = line.split_whitespace();
-        let lhs = it.next().unwrap().parse().unwrap();
-        let rhs = it.next().unwrap().parse().unwrap();
-        latches.push((lhs, rhs));
-    }
+    // Parse latches
+    let latches: Vec<Latch> = (&mut lines)
+        .take(num_latches as usize)
+        .map(|line| {
+            let line = line?;
+            let mut signals = line.split_whitespace();
+            Ok::<Latch, ParseError>(Latch {
+                out: signals.next().ok_or(ParseError::MissingField)?.parse()?,
+                next: signals.next().ok_or(ParseError::MissingField)?.parse()?,
+            })
+        })
+        .collect::<Result<_, _>>()?;
 
-    // Outputs
-    let mut outputs = Vec::with_capacity(num_outputs as usize);
-    for _ in 0..num_outputs {
-        let lit = lines.next().unwrap().unwrap().parse().unwrap();
-        outputs.push(lit);
-    }
+    // Parse outputs
+    let outputs: Vec<u32> = (&mut lines)
+        .take(num_outputs as usize)
+        .map(|line| line?.parse().map_err(ParseError::from))
+        .collect::<Result<_, _>>()?;
 
-    // AND gates
-    let mut and_gates = Vec::with_capacity(num_ands as usize);
-    for _ in 0..num_ands {
-        let line = lines.next().unwrap().unwrap();
-        let mut it = line.split_whitespace();
-        let lhs = it.next().unwrap().parse().unwrap();
-        let rhs0 = it.next().unwrap().parse().unwrap();
-        let rhs1 = it.next().unwrap().parse().unwrap();
-        and_gates.push(AndGate { lhs, rhs0, rhs1 });
-    }
+    // Parse AND gates
+    let and_gates: Vec<AndGate> = (&mut lines)
+        .take(num_ands as usize)
+        .map(|line| {
+            let line = line?;
+            let mut signals = line.split_whitespace();
+            Ok::<AndGate, ParseError>(AndGate {
+                out: signals.next().ok_or(ParseError::MissingField)?.parse()?,
+                in1: signals.next().ok_or(ParseError::MissingField)?.parse()?,
+                in2: signals.next().ok_or(ParseError::MissingField)?.parse()?,
+            })
+        })
+        .collect::<Result<_, _>>()?;
 
-    // Symbols and comments can be parsed here if needed
-    // Lines starting with 'i', 'l', 'o' are symbols
-    // Line starting with 'c' begins comments
+    // Gate names and comments in the AIGER file are ignored
 
-    Aiger {
-        max_var,
+    Ok(AIG {
+        max_idx,
         inputs,
         latches,
         outputs,
         and_gates,
-    }
+    })
 }
