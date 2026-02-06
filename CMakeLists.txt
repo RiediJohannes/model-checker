@@ -18,8 +18,6 @@ add_executable(model_checker
         src/minisat/Solver.h
         src/minisat/SolverTypes.h
         src/minisat/Sort.h
-        src/minisat/Test.C
-        src/minisat/Test.h
         src/minisat/VarOrder.h
         src/minisat/Api.C
         src/minisat/Api.h)

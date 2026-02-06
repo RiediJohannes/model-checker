@@ -5,7 +5,7 @@
 #include "Solver.h"
 #include "rust/cxx.h"  // needed to define shared types
 
-struct Literal;        // full definition in interop.rs
+struct Literal;        // full definition in minisat.rs
 
 class SolverStub {
 public:

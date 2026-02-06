@@ -6,11 +6,10 @@ fn main() {
     let path = Path::new("./src").canonicalize().expect("Failed to resolve 'src' directory");
     CFG.exported_header_dirs.extend(vec![path.as_path()]);
 
-    cxx_build::bridge("src/interop.rs")
+    cxx_build::bridge("src/minisat.rs")
         .file("src/minisat/File.C")
         .file("src/minisat/Proof.C")
         .file("src/minisat/Solver.C")
-        .file("src/minisat/Test.C")
         .file("src/minisat/Api.C")
         .std("gnu++11")  // max-version for minisat 1.14 AND min-version for CXX bridge
         // .flag("-O3")
@@ -26,7 +25,6 @@ fn main() {
 
     println!("cargo:rerun-if-changed=src/minisat/Solver.C");
     println!("cargo:rerun-if-changed=src/minisat/Proof.C");
-    println!("cargo:rerun-if-changed=src/minisat/Test.C");
     println!("cargo:rerun-if-changed=src/minisat/Api.C");
 
     // Compile manually

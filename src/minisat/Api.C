@@ -1,5 +1,5 @@
 #include "Api.h"
-#include "model-checker/src/interop.rs.h"  // import shared types
+#include "model-checker/src/minisat.rs.h"  // import shared types
 
 
 inline Lit literalToLit(const Literal& l) {

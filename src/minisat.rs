@@ -1,8 +1,10 @@
 use std::fmt::Display;
 use std::ops::Neg;
 
+use ffi::Literal;
+
 #[cxx::bridge]
-pub mod minisat {
+pub mod ffi {
     // Shared structs, whose fields will be visible to both languages
     #[derive(Debug, Copy, Clone)]
     struct Literal {
@@ -17,10 +19,6 @@ pub mod minisat {
     // }
 
     unsafe extern "C++" {
-        include!("minisat/Test.h");
-
-        fn addInts(a: i32, b: i32) -> i32;
-
         include!("minisat/Api.h");
 
         // Opaque types which both languages can pass around but only C++ can see the fields
@@ -35,20 +33,52 @@ pub mod minisat {
     }
 }
 
-
-impl minisat::Literal {
-    pub fn var(&self) -> i32 { self.id >> 1 }
-    pub fn is_pos(&self) -> bool { self.id & 1 == 0 }
-    pub fn unsign(&self) -> minisat::Literal { minisat::Literal { id: self.id & !1 } }
+impl Literal {
+    pub fn var(&self) -> i32 {
+        self.id >> 1
+    }
+    pub fn is_pos(&self) -> bool {
+        self.id & 1 == 0
+    }
+    pub fn unsign(&self) -> Literal {
+        Literal { id: self.id & !1 }
+    }
 }
 
-impl Neg for minisat::Literal {
+impl Neg for Literal {
     type Output = Self;
-    fn neg(self) -> Self::Output { minisat::Literal { id: self.id ^ 1 } }
+    fn neg(self) -> Self::Output {
+        Literal { id: self.id ^ 1 }
+    }
 }
 
-impl Display for minisat::Literal {
+impl Display for Literal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}{}", if self.is_pos() {""} else {"-"}, self.var())
+        write!(f, "{}{}", if self.is_pos() { "" } else { "-" }, self.var())
+    }
+}
+
+impl From<i32> for Literal {
+    fn from(i: i32) -> Self {
+        Literal { id: i << 1 }
+    }
+}
+
+#[derive(Debug)]
+pub struct Clause {
+    lits: Box<[Literal]>,
+}
+
+impl Clause {
+    pub fn new<I>(lits: I) -> Self
+    where
+        I: IntoIterator<Item = Literal>,
+    {
+        let v: Vec<Literal> = lits.into_iter().collect();
+        Clause::from_vec(v)
+    }
+
+    pub fn from_vec(v: Vec<Literal>) -> Self {
+        Self { lits: v.into_boxed_slice() }
     }
 }
