@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.28)
 project(model_checker)
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 11)
 
 include_directories(src/minisat)
 include_directories(target/cxxbridge)

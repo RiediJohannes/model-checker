@@ -30,11 +30,8 @@ pub mod minisat {
         fn new_solver() -> UniquePtr<SolverStub>;
 
         fn new_var(self: Pin<&mut SolverStub>) -> Literal;
-        // fn add_clause(self: Pin<&mut SolverStub>, clause: Vec<Literal>);
-        // fn add_clause(self: Pin<&mut SolverStub>, clause: &[Literal]);
+        fn add_clause(self: Pin<&mut SolverStub>, clause: &[Literal]);
         fn solve(self: Pin<&mut SolverStub>) -> bool;
-        // fn new_var(solver: Pin<&mut SolverStub>) -> i32;
-        // fn solve(solver: Pin<&mut SolverStub>) -> bool;
     }
 }
 

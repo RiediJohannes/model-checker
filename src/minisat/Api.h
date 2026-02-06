@@ -4,7 +4,6 @@
 
 #include "Solver.h"
 #include "rust/cxx.h"  // needed to define shared types
-// #include "model-checker/src/interop.rs.h"  // import shared types
 
 struct Literal;        // full definition in interop.rs
 
@@ -13,7 +12,7 @@ public:
     SolverStub();
 
     Literal new_var();
-    // void add_clause(rust::Slice<const Literal> clause);
+    void add_clause(rust::Slice<const Literal> clause);  // Linter complains about unknown namespace but header is (and must be) included in Api.C
     bool solve();
 
 private:
