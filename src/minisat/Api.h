@@ -4,15 +4,16 @@
 #include <memory>
 
 #include "Solver.h"
+#include "rust/cxx.h"  // needed to define shared types
+
+struct Literal;        // full definition in interop.rs
 
 class SolverStub {
 public:
     SolverStub();
 
-    int new_var();
+    Literal new_var();
     bool solve();
-
-    // int model_value(int var) const;
 
 private:
     Solver solver;

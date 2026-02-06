@@ -381,10 +381,10 @@ int main(int argc, char *argv[]) {
     testSolver.addBinary(~b, c);
     // testSolver.addBinary(~c, ~a);  // This clause makes the encoding UNSAT
 
-    vec<Lit> clause;
-    clause.push(~b);
-    clause.push(c);
-    testSolver.addClause(clause);
+    // vec<Lit> clause;
+    // clause.push(~b);
+    // clause.push(c);
+    // testSolver.addClause(clause);
 
     vec<Lit> assumptions;
     assumptions.push(a);

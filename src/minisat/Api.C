@@ -1,12 +1,15 @@
 #include "Api.h"
+#include "model-checker/src/interop.rs.h"  // import shared types
 
 SolverStub::SolverStub() = default;
 
-int SolverStub::new_var() {
-    return solver.newVar();
+Literal SolverStub::new_var() {
+    const int nextVar = solver.newVar();
+    const Literal lit{ nextVar };
+    return lit;
 }
 
-// void SolverStub::add_clause_1(int lit) {
+// void SolverStub::add_clause(int lit) {
 //     solver.addClause(mkLit(lit));
 // }
 

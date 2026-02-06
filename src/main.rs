@@ -25,14 +25,20 @@ fn main() {
 
 
     // Test SAT solver calls across FFI
-    let mut unpinned_solver= minisat::new_solver();
-    let solver = unpinned_solver.pin_mut();
-    let result = solver.solve();
+    let mut solver= minisat::new_solver();
+    let result = solver.pin_mut().solve();
+    let result = solver.pin_mut().solve();
 
     dbg!(result);
 
+    let lit = solver.pin_mut().new_var();
+    dbg!(&lit);
+    dbg!(lit.var());
+    let lit2 = solver.pin_mut().new_var();
+    dbg!(&lit2);
+    dbg!(lit2.var());
 
-    let instance = bmc::load_instance("data/combination.aag").unwrap_or_else(|e| {
+    let instance = bmc::load_model("data/combination.aag").unwrap_or_else(|e| {
         eprintln!("Parsing error: {e}");
         process::exit(1);
     });

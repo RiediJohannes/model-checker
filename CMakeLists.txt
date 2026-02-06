@@ -4,6 +4,7 @@ project(model_checker)
 set(CMAKE_CXX_STANDARD 14)
 
 include_directories(src/minisat)
+include_directories(target/cxxbridge)
 
 add_executable(model_checker
         src/minisat/File.C
