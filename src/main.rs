@@ -37,6 +37,9 @@ fn main() {
     let lit2 = solver.pin_mut().new_var();
     dbg!(&lit2);
     dbg!(lit2.var());
+    println!("{}", &lit);
+    println!("{}", -lit2);
+    println!("{}", lit2);
 
     let instance = bmc::load_model("data/combination.aag").unwrap_or_else(|e| {
         eprintln!("Parsing error: {e}");
