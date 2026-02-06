@@ -1,7 +1,9 @@
 use std::fmt::Display;
 use std::ops::Neg;
+use std::pin::Pin;
+use ffi::SolverStub;
 
-use ffi::Literal;
+pub use ffi::Literal;
 
 #[cxx::bridge]
 pub mod ffi {
@@ -25,10 +27,10 @@ pub mod ffi {
         type SolverStub;
 
         // Functions implemented in C++.
-        fn new_solver() -> UniquePtr<SolverStub>;
+        fn newSolver() -> UniquePtr<SolverStub>;
 
-        fn new_var(self: Pin<&mut SolverStub>) -> Literal;
-        fn add_clause(self: Pin<&mut SolverStub>, clause: &[Literal]);
+        fn newVar(self: Pin<&mut SolverStub>) -> Literal;
+        fn addClause(self: Pin<&mut SolverStub>, clause: &[Literal]);
         fn solve(self: Pin<&mut SolverStub>) -> bool;
     }
 }
@@ -64,21 +66,56 @@ impl From<i32> for Literal {
     }
 }
 
-#[derive(Debug)]
-pub struct Clause {
-    lits: Box<[Literal]>,
+// #[derive(Debug)]
+// pub struct Clause {
+//     lits: Box<[Literal]>,
+// }
+//
+// impl Clause {
+//     pub fn new<I>(lits: I) -> Self
+//     where
+//         I: IntoIterator<Item = Literal>,
+//     {
+//         let v: Vec<Literal> = lits.into_iter().collect();
+//         Clause::from_vec(v)
+//     }
+//
+//     pub fn from_vec(v: Vec<Literal>) -> Self {
+//         Self { lits: v.into_boxed_slice() }
+//     }
+// }
+
+pub struct Solver {
+    base: cxx::UniquePtr<SolverStub>,
 }
 
-impl Clause {
-    pub fn new<I>(lits: I) -> Self
-    where
-        I: IntoIterator<Item = Literal>,
-    {
-        let v: Vec<Literal> = lits.into_iter().collect();
-        Clause::from_vec(v)
+impl Solver {
+    pub fn new() -> Self {
+        Self {
+            base: ffi::newSolver(),
+        }
     }
 
-    pub fn from_vec(v: Vec<Literal>) -> Self {
-        Self { lits: v.into_boxed_slice() }
+    pub fn add_var(&mut self) -> Literal {
+        self.remote().newVar()
+    }
+
+    pub fn add_vars(&mut self, n: usize) -> Vec<Literal> {
+        (0..n).map(|_| self.add_var()).collect()
+    }
+
+    pub fn add_clause<L>(&mut self, clause: L)
+    where
+        L: AsRef<[Literal]>,
+    {
+        self.remote().addClause(clause.as_ref());
+    }
+
+    pub fn solve(&mut self) -> bool {
+        self.remote().solve()
+    }
+
+    fn remote(&mut self) -> Pin<&mut SolverStub> {
+        self.base.pin_mut()
     }
 }

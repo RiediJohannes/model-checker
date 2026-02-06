@@ -11,12 +11,12 @@ class SolverStub {
 public:
     SolverStub();
 
-    Literal new_var();
-    void add_clause(rust::Slice<const Literal> clause);  // Linter complains about unknown namespace but header is (and must be) included in Api.C
+    Literal newVar();
+    void addClause(rust::Slice<const Literal> clause);  // Linter complains about unknown namespace but header is (and must be) included in Api.C
     bool solve();
 
 private:
     Solver solver;
 };
 
-std::unique_ptr<SolverStub> new_solver();
+std::unique_ptr<SolverStub> newSolver();

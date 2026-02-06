@@ -3,7 +3,6 @@
 mod minisat;
 mod bmc;
 
-use minisat::ffi as sat;
 use std::process;
 
 
@@ -13,18 +12,18 @@ fn main() {
     println!("Hello, world!");
 
     // Test SAT solver calls across FFI
-    let mut solver= sat::new_solver();
+    let mut solver= minisat::Solver::new();
 
-    let a = solver.pin_mut().new_var();
-    let b = solver.pin_mut().new_var();
-    let c = solver.pin_mut().new_var();
+    let a = solver.add_var();
+    let b = solver.add_var();
+    let c = solver.add_var();
 
-    solver.pin_mut().add_clause(&[a]);
-    solver.pin_mut().add_clause(&[-a, b]);
-    solver.pin_mut().add_clause(&[-b, c]);
-    solver.pin_mut().add_clause(&[-c, -a]);
+    solver.add_clause([a]);
+    solver.add_clause([-a, b]);
+    solver.add_clause([-b, c]);
+    solver.add_clause([-c, -a]);
 
-    let result = solver.pin_mut().solve();
+    let result = solver.solve();
     dbg!(result);
 
 

@@ -1,6 +1,6 @@
 use crate::bmc::aiger;
 use crate::bmc::aiger::{ParseError, AIG};
-use crate::minisat::Clause;
+use crate::minisat::{Solver, Literal};
 
 pub fn load_model(name: &str) -> Result<BmcModel, ParseError> {
     let aig = aiger::parse_aiger_ascii(name)?;
@@ -24,26 +24,31 @@ pub struct BmcModel {
 
 impl BmcModel {
     pub fn unwind(&'_ self, k: u32) -> UnwoundBmcModel<'_> {
-        let clauses = Vec::with_capacity((3 * k * self.graph.max_idx) as usize);
+        let mut solver = Solver::new();
 
         // Special handling of time step 0
 
         // We need variables for each input, latch, gate and output at each time step
         for t in 1..k {
             // Create SAT vars
-            // let inputs = self.graph.inputs.iter().map(|i| Literal {id: i}).collect::<Vec<_>>();
-            let outputs = self.graph.outputs.iter().map(|o| 2*o).collect::<Vec<_>>();
-            let gates = self.graph.and_gates.iter().map(|g| g.out).collect::<Vec<_>>();
-            let latches = self.graph.latches.iter().map(|l| l.out).collect::<Vec<_>>();
+            let inputs: Vec<Literal> = solver.add_vars(self.graph.inputs.len());
+            let outputs: Vec<Literal> = solver.add_vars(self.graph.outputs.len());
+            let gates: Vec<Literal> = solver.add_vars(self.graph.and_gates.len());
+            let latches: Vec<Literal> = solver.add_vars(self.graph.latches.len());
 
             // Add SAT clauses
-            // let c = Clause::new([a,b,c])
+
+            // AND-gates
+            // for (i, gate) in self.graph.and_gates.iter().enumerate() {
+            //     // gate.in1
+            // }
+            // let _c = solver.add_clause([-inputs[0], outputs[0]]);
         }
 
         UnwoundBmcModel {
             base: self,
             k,
-            cnf: clauses,
+            solver,
         }
     }
 }
@@ -51,7 +56,7 @@ impl BmcModel {
 pub struct UnwoundBmcModel<'a> {
     base: &'a BmcModel,
     k: u32,
-    cnf: Vec<Clause>,
+    solver: Solver,
 }
 
 impl UnwoundBmcModel<'_> {
