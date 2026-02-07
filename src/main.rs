@@ -32,6 +32,6 @@ fn main() {
         process::exit(1);
     });
 
-    let checking_result = instance.unwind(10).check_bounded();
+    let checking_result = instance.unwind(10).unwrap().check_bounded();
     println!("{:?}", checking_result)
 }

@@ -18,7 +18,17 @@ pub enum ParseError {
     IoError(#[from] std::io::Error),
 }
 
+struct Signal {
+    idx: u32
+}
+impl Signal {
+    pub fn new(idx: u32) -> Self {
+        Self { idx }
+    }
+}
 
+
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug)]
 pub struct AIG {
     pub max_idx: u32,

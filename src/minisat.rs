@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::ops::Neg;
 use std::pin::Pin;
@@ -87,12 +88,14 @@ impl From<i32> for Literal {
 
 pub struct Solver {
     base: cxx::UniquePtr<SolverStub>,
+    var_pool: HashMap<String, Literal>,
 }
 
 impl Solver {
     pub fn new() -> Self {
         Self {
             base: ffi::newSolver(),
+            var_pool: HashMap::new(),
         }
     }
 
