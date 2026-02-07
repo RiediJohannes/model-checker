@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-
+use std::str::FromStr;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -8,22 +8,57 @@ pub enum ParseError {
     #[error("Failed to parse integer: {0}")]
     ParseIntError(#[from] std::num::ParseIntError),
 
-    #[error("Missing field in input")]
+    #[error("Constant signal '0' or '1' used in illegal place!")]
+    IllegalConstant,
+
+    #[error("Missing field in input file")]
     MissingField,
 
     #[error("Invalid file format: Expected header tag 'aag', got '{0}'")]
     InvalidHeaderTag(String),
 
-    #[error("IO error: {0}")]
+    #[error("Error while reading input file: {0}")]
     IoError(#[from] std::io::Error),
 }
 
-struct Signal {
-    idx: u32
+#[derive(Debug)]
+pub enum Signal {
+    Constant(bool),
+    Var(AigVar)
 }
-impl Signal {
-    pub fn new(idx: u32) -> Self {
-        Self { idx }
+impl FromStr for Signal {
+    type Err = ParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let num = s.parse::<u32>()?;
+        match num {
+            0 => Ok(Signal::Constant(false)),
+            1 => Ok(Signal::Constant(true)),
+            _ => Ok(Signal::Var(AigVar { val: num << 1 }))
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct AigVar {
+    val: u32
+}
+impl AigVar {
+    pub fn idx(&self) -> u32 {
+        self.val >> 1
+    }
+    pub fn is_neg(&self) -> bool {
+        self.val & 1 == 1
+    }
+}
+impl FromStr for AigVar {
+    type Err = ParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let num = s.parse::<u32>()?;
+        if num < 2 {
+            Err(ParseError::IllegalConstant)
+        } else {
+            Ok(Self { val: num })
+        }
     }
 }
 
@@ -32,23 +67,30 @@ impl Signal {
 #[derive(Debug)]
 pub struct AIG {
     pub max_idx: u32,
-    pub inputs: Vec<u32>,
+    pub inputs: Vec<AigVar>,
     pub latches: Vec<Latch>,
-    pub outputs: Vec<u32>,
+    pub outputs: Vec<Signal>,
     pub and_gates: Vec<AndGate>,
+}
+impl AIG {
+    pub fn variables(&self) -> impl Iterator<Item = Signal> {
+        (2..=self.max_idx)
+            .step_by(2)
+            .map(|val| Signal::Var(AigVar { val }))
+    }
 }
 
 #[derive(Debug)]
 pub struct AndGate {
-    pub out: u32,
-    pub in1: u32,
-    pub in2: u32,
+    pub out: AigVar,
+    pub in1: Signal,
+    pub in2: Signal,
 }
 
 #[derive(Debug)]
 pub struct Latch {
-    pub out: u32,
-    pub next: u32,
+    pub out: AigVar,
+    pub next: Signal,
 }
 
 pub fn parse_aiger_ascii(path: &str) -> Result<AIG, ParseError> {
@@ -75,7 +117,7 @@ pub fn parse_aiger_ascii(path: &str) -> Result<AIG, ParseError> {
 
     // Inputs
     // Parse inputs
-    let inputs: Vec<u32> = (&mut lines)
+    let inputs: Vec<AigVar> = (&mut lines)
         .take(num_inputs as usize)
         .map(|line| line?.parse().map_err(ParseError::from))
         .collect::<Result<_, _>>()?;
@@ -94,7 +136,7 @@ pub fn parse_aiger_ascii(path: &str) -> Result<AIG, ParseError> {
         .collect::<Result<_, _>>()?;
 
     // Parse outputs
-    let outputs: Vec<u32> = (&mut lines)
+    let outputs: Vec<Signal> = (&mut lines)
         .take(num_outputs as usize)
         .map(|line| line?.parse().map_err(ParseError::from))
         .collect::<Result<_, _>>()?;

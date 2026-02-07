@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use thiserror::Error;
 use crate::bmc::aiger;
-use crate::bmc::aiger::{ParseError, AIG};
+use crate::bmc::aiger::{ParseError, Signal, AIG};
 use crate::minisat::{Solver, Literal};
 
 pub fn load_model(name: &str) -> Result<BmcModel, ParseError> {
@@ -37,12 +37,12 @@ impl BmcModel {
         // Special handling of time step 0
 
         // We need variables for each input, latch, gate and output at each time step
-        for t in 1..(k+1) {
+        for t in 1..=k {
             unwound.add_step();
 
             // Initialize variables for all signals at the current time step
-            for s in 1..self.graph.max_idx {
-                unwound.signal_at_time(s, t)?;
+            for sig in self.graph.variables() {
+                unwound.signal_at_time(sig, t)?;
             }
 
             // Add SAT clauses
@@ -72,10 +72,18 @@ impl UnwoundBmcModel<'_> {
         let mut time_steps = Vec::new();
         time_steps.push(HashMap::with_capacity(base_model.graph.max_idx as usize));
 
+        // Add the constant zero and constat one literal to the solver
+        let mut solver = Solver::new();
+        let bottom = solver.add_var();
+        let top = solver.add_var();
+
+        solver.add_clause([-bottom]);
+        solver.add_clause([top]);
+
         UnwoundBmcModel {
             base: base_model,
             time_steps,
-            solver: Solver::new()
+            solver
         }
     }
 
@@ -84,11 +92,17 @@ impl UnwoundBmcModel<'_> {
         self.time_steps.len() - 1  // return new time step id
     }
 
-    pub fn signal_at_time(&mut self, signal_idx: u32, time: u32) -> Result<Literal,ModelCheckingError> {
-        if let Some(step_vars) = self.time_steps.get_mut(time as usize) {
-            Ok(*step_vars.entry(signal_idx).or_insert(self.solver.add_var()))
-        } else {
-            Err(ModelCheckingError::InvalidTimeStep(time, (self.time_steps.len() + 1) as u32))
+    pub fn signal_at_time(&mut self, signal: Signal, time: u32) -> Result<Literal, ModelCheckingError> {
+        match signal {
+            Signal::Constant(truth_val) => Ok(if truth_val { Literal::from(1) } else { Literal::from(0) }),
+            Signal::Var(aig_var) => {
+                if let Some(step_vars) = self.time_steps.get_mut(time as usize) {
+                    let lit = *step_vars.entry(aig_var.idx()).or_insert(self.solver.add_var());
+                    Ok(if aig_var.is_neg() { -lit } else { lit })
+                } else {
+                    Err(ModelCheckingError::InvalidTimeStep(time, (self.time_steps.len() + 1) as u32))
+                }
+            }
         }
     }
 
