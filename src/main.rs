@@ -9,8 +9,6 @@ use std::process;
 fn main() {
     // TODO: Parse CLI parameters (file name and k)
 
-    println!("Starting model checker...");
-
     // Test SAT solver calls across FFI
     // let mut solver= minisat::Solver::new();
     //
@@ -33,6 +31,6 @@ fn main() {
         process::exit(1);
     });
 
-    let checking_result = instance.unwind(3).unwrap().check_bounded();
+    let checking_result = instance.unwind(2).unwrap().check_bounded();
     println!("{:?}", checking_result)
 }

@@ -33,7 +33,7 @@ impl FromStr for Signal {
         match num {
             0 => Ok(Signal::Constant(false)),
             1 => Ok(Signal::Constant(true)),
-            _ => Ok(Signal::Var(AigVar { val: num << 1 }))
+            _ => Ok(Signal::Var(AigVar { val: num }))
         }
     }
 }
@@ -73,10 +73,8 @@ pub struct AIG {
     pub and_gates: Vec<AndGate>,
 }
 impl AIG {
-    pub fn variables(&self) -> impl Iterator<Item = Signal> {
-        (2..=self.max_idx)
-            .step_by(2)
-            .map(|val| Signal::Var(AigVar { val }))
+    pub fn variables(&self) -> impl Iterator<Item = AigVar> {
+        (1..=self.max_idx).map(|idx| AigVar { val: 2*idx })
     }
 }
 
@@ -119,7 +117,7 @@ pub fn parse_aiger_ascii(path: &str) -> Result<AIG, ParseError> {
     // Parse inputs
     let inputs: Vec<Signal> = (&mut lines)
         .take(num_inputs as usize)
-        .map(|line| line?.parse().map_err(ParseError::from))
+        .map(|line| line?.parse())
         .collect::<Result<_, _>>()?;
 
     // Parse latches
@@ -138,7 +136,7 @@ pub fn parse_aiger_ascii(path: &str) -> Result<AIG, ParseError> {
     // Parse outputs
     let outputs: Vec<Signal> = (&mut lines)
         .take(num_outputs as usize)
-        .map(|line| line?.parse().map_err(ParseError::from))
+        .map(|line| line?.parse())
         .collect::<Result<_, _>>()?;
 
     // Parse AND gates

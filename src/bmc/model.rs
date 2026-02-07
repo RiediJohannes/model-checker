@@ -39,8 +39,8 @@ impl BmcModel {
             unwound.add_step();
 
             // Initialize variables for all signals at the current time step (for reasonable order)
-            for sig in self.graph.variables() {
-                unwound.signal_at_time(&sig, t)?;
+            for var in self.graph.variables() {
+                unwound.signal_at_time(&Signal::Var(var), t)?;
             }
 
             // Add SAT clauses
@@ -68,16 +68,6 @@ impl BmcModel {
                     unwound.solver.add_clause([-prev, curr]);
                     unwound.solver.add_clause([-curr, prev]);
                 }
-
-                // if t < 1 {
-                //     unwound.solver.add_clause([-curr]);
-                // }
-                //
-                // let curr_plus_1 = unwound.signal_at_time(&latch.out, t+1)?;
-                // let next = unwound.signal_at_time(&latch.next, t)?;
-                //
-                // unwound.solver.add_clause([-curr_plus_1, next]);
-                // unwound.solver.add_clause([-next, curr_plus_1]);
             }
 
             // Debug: Add this clause to make the formula UNSAT
@@ -108,8 +98,6 @@ impl UnwoundBmcModel<'_> {
     const CONSTANT_HIGH: i32 = 1;
 
     pub fn new(base_model: &'_ BmcModel) -> UnwoundBmcModel<'_> {
-        let time_steps = vec![HashMap::with_capacity(base_model.graph.max_idx as usize)];
-
         // Add the constant zero and constat one literal to the solver
         let mut solver = Solver::new();
         let bottom = solver.add_var();
@@ -123,7 +111,7 @@ impl UnwoundBmcModel<'_> {
 
         UnwoundBmcModel {
             base: base_model,
-            time_steps,
+            time_steps: Vec::new(),
             solver
         }
     }
@@ -140,7 +128,7 @@ impl UnwoundBmcModel<'_> {
             Signal::Constant(false) => Ok(Self::CONSTANT_LOW.into()),
             Signal::Var(aig_var) => {
                 if let Some(step_vars) = self.time_steps.get_mut(time as usize) {
-                    let lit = *step_vars.entry(aig_var.idx()).or_insert(self.solver.add_var());
+                    let lit = *step_vars.entry(aig_var.idx()).or_insert_with(||self.solver.add_var());
                     Ok(if aig_var.is_neg() { -lit } else { lit })
                 } else {
                     Err(ModelCheckingError::InvalidTimeStep(time, (self.time_steps.len() + 1) as u32))
@@ -154,7 +142,8 @@ impl UnwoundBmcModel<'_> {
         match self.solver.solve() {
             true => {
                 let model = self.solver.get_model();
-                // self.pretty_print_model(model.as_slice());
+                // self.print_sat_model(model.as_slice());
+                self.print_input_trace(model.as_slice());
                 ModelCheckingConclusion::Fail
             },
             false => ModelCheckingConclusion::Ok,
@@ -163,5 +152,73 @@ impl UnwoundBmcModel<'_> {
 
     pub fn check_interpolated(&mut self) -> ModelCheckingConclusion {
         todo!("Interpolated model checking not yet implemented.");
+    }
+
+    pub fn print_sat_model(&self, model: &[i8]) {
+        let num_i = self.base.graph.inputs.len();
+        let num_l = self.base.graph.latches.len();
+        let num_a = self.base.graph.and_gates.len();
+        let frame_size = num_i + num_l + num_a;
+
+        println!("--- SAT Model Assignment (True Variables) ---");
+
+        for (idx, &val) in model.iter().enumerate().skip(2) {
+            // Only print variables that were set to true
+            if val != 1 {
+                continue;
+            }
+
+            let normalized = idx - 2;
+            let t = normalized / frame_size; // Time step
+            let f = normalized % frame_size; // Offset in frame
+
+            // Determine the semantic meaning of the variable within the current frame
+            let (label, local_idx) = if f < num_i {
+                ("Input", f)
+            } else if f < num_i + num_l {
+                ("Latch", f - num_i)
+            } else {
+                ("AND", f - (num_i + num_l))
+            };
+
+            println!("{:>4}: {}_{}@{}", idx, label, local_idx, t);
+        }
+        println!("--------------------------------------------");
+    }
+
+    pub fn print_input_trace(&self, model: &[i8]) {
+        let num_i = self.base.graph.inputs.len();
+
+        // The first two variables are constants (top/bottom)
+        let total_vars = model.len().saturating_sub(2);
+        let vars_per_frame = self.base.graph.variables().count();
+        let num_steps = total_vars / vars_per_frame;
+
+        // Header
+        println!("\n=== Input Trace (Counter-Example) ===");
+        print!("{:>4} | ", "t");
+        for i in 0..num_i {
+            print!("In_{:<2} ", i);
+        }
+        println!("\n{:-<5}+{:-<}", "", "-".repeat(num_i * 5));
+
+        for k in 0..num_steps {
+            print!("{:>4} | ", k);
+            for i in 0..num_i {
+                // Use frame_size derived from variables().len()
+                let idx = 2 + (k * vars_per_frame) + i;
+                if let Some(&val) = model.get(idx) {
+                    let display = match val {
+                        1  => " T  ", // True
+                        -1 => " F  ", // False
+                        0  => " x  ", // Undefined
+                        _  => " !  ", // Should not happen
+                    };
+                    print!("{}", display);
+                }
+            }
+            println!();
+        }
+        println!("=====================================\n");
     }
 }
