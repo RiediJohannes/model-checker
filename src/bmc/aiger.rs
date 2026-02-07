@@ -21,7 +21,7 @@ pub enum ParseError {
     IoError(#[from] std::io::Error),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Signal {
     Constant(bool),
     Var(AigVar)
@@ -38,7 +38,7 @@ impl FromStr for Signal {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct AigVar {
     val: u32
 }
@@ -67,7 +67,7 @@ impl FromStr for AigVar {
 #[derive(Debug)]
 pub struct AIG {
     pub max_idx: u32,
-    pub inputs: Vec<AigVar>,
+    pub inputs: Vec<Signal>,
     pub latches: Vec<Latch>,
     pub outputs: Vec<Signal>,
     pub and_gates: Vec<AndGate>,
@@ -82,14 +82,14 @@ impl AIG {
 
 #[derive(Debug)]
 pub struct AndGate {
-    pub out: AigVar,
+    pub out: Signal,
     pub in1: Signal,
     pub in2: Signal,
 }
 
 #[derive(Debug)]
 pub struct Latch {
-    pub out: AigVar,
+    pub out: Signal,
     pub next: Signal,
 }
 
@@ -117,7 +117,7 @@ pub fn parse_aiger_ascii(path: &str) -> Result<AIG, ParseError> {
 
     // Inputs
     // Parse inputs
-    let inputs: Vec<AigVar> = (&mut lines)
+    let inputs: Vec<Signal> = (&mut lines)
         .take(num_inputs as usize)
         .map(|line| line?.parse().map_err(ParseError::from))
         .collect::<Result<_, _>>()?;

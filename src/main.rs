@@ -9,22 +9,23 @@ use std::process;
 fn main() {
     // TODO: Parse CLI parameters (file name and k)
 
-    println!("Hello, world!");
+    println!("Starting model checker...");
 
     // Test SAT solver calls across FFI
-    let mut solver= minisat::Solver::new();
-
-    let a = solver.add_var();
-    let b = solver.add_var();
-    let c = solver.add_var();
-
-    solver.add_clause([a]);
-    solver.add_clause([-a, b]);
-    solver.add_clause([-b, c]);
-    solver.add_clause([-c, -a]);
-
-    let result = solver.solve();
-    dbg!(result);
+    // let mut solver= minisat::Solver::new();
+    //
+    // let a = solver.add_var();
+    // let b = solver.add_var();
+    // let c = solver.add_var();
+    //
+    // solver.add_clause([a]);
+    // solver.add_clause([-a, b]);
+    // solver.add_clause([-b, c]);
+    // solver.add_clause([-c, -a]);
+    //
+    // let result = solver.solve();
+    // dbg!(result);
+    // dbg!(solver.get_model());
 
 
     let instance = bmc::load_model("data/combination.aag").unwrap_or_else(|e| {
@@ -32,6 +33,6 @@ fn main() {
         process::exit(1);
     });
 
-    let checking_result = instance.unwind(10).unwrap().check_bounded();
+    let checking_result = instance.unwind(3).unwrap().check_bounded();
     println!("{:?}", checking_result)
 }

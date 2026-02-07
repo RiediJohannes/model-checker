@@ -1,7 +1,7 @@
+use ffi::SolverStub;
 use std::fmt::Display;
 use std::ops::Neg;
 use std::pin::Pin;
-use ffi::SolverStub;
 
 pub use ffi::Literal;
 
@@ -13,17 +13,11 @@ pub mod ffi {
         id: i32,
     }
 
-    // Potential Rust types that shall be visible to C++
-    // extern "Rust" {
-    //     type MultiBuf;
-    //
-    //     fn next_chunk(buf: &mut MultiBuf) -> &[u8];
-    // }
-
     unsafe extern "C++" {
         include!("minisat/Api.h");
 
         // Opaque types which both languages can pass around but only C++ can see the fields
+        /// Proxy handle of the minisat SAT solver accessed through the Rust<>C++ interop.
         type SolverStub;
 
         // Functions implemented in C++.
@@ -32,7 +26,15 @@ pub mod ffi {
         fn newVar(self: Pin<&mut SolverStub>) -> Literal;
         fn addClause(self: Pin<&mut SolverStub>, clause: &[Literal]);
         fn solve(self: Pin<&mut SolverStub>) -> bool;
+        fn getModel(self: Pin<&mut SolverStub>) -> UniquePtr<CxxVector<i8>>;
     }
+
+    // Potential Rust types that shall be visible to C++
+    // extern "Rust" {
+    //     type MultiBuf;
+    //
+    //     fn next_chunk(buf: &mut MultiBuf) -> &[u8];
+    // }
 }
 
 impl Literal {
@@ -85,14 +87,16 @@ impl From<i32> for Literal {
 //     }
 // }
 
+
+/// Thin wrapper around [SolverStub] to offer a more developer-friendly interface.
 pub struct Solver {
-    base: cxx::UniquePtr<SolverStub>,
+    stub: cxx::UniquePtr<SolverStub>,
 }
 
 impl Solver {
     pub fn new() -> Self {
         Self {
-            base: ffi::newSolver(),
+            stub: ffi::newSolver(),
         }
     }
 
@@ -115,7 +119,13 @@ impl Solver {
         self.remote().solve()
     }
 
+    pub fn get_model(&mut self) -> cxx::UniquePtr<cxx::CxxVector<i8>>
+    {
+        self.remote().getModel()
+    }
+
+    /// Quick and idiomatic access to a pinned mutable reference of the underlying solver.
     fn remote(&mut self) -> Pin<&mut SolverStub> {
-        self.base.pin_mut()
+        self.stub.pin_mut()
     }
 }

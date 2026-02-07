@@ -14,11 +14,7 @@ Literal SolverStub::newVar() {
     return lit;
 }
 
-bool SolverStub::solve() {
-    return solver.solve();
-}
-
-void SolverStub::addClause(rust::Slice<const Literal> rustClause) {
+void SolverStub::addClause(rust::Slice<const Literal> const rustClause) {
     vec<Lit> clause;
     for (const auto& rustLit : rustClause) {
         const Lit lit = literalToLit(rustLit);
@@ -26,6 +22,22 @@ void SolverStub::addClause(rust::Slice<const Literal> rustClause) {
     }
 
     solver.addClause(clause);
+}
+
+bool SolverStub::solve() {
+    return solver.solve();
+}
+
+std::unique_ptr<std::vector<int8_t>> SolverStub::getModel() {
+    // Allocate a new vector because we can only pass a std::vector across the FFI
+    auto result = std::unique_ptr<std::vector<int8_t>>(new std::vector<int8_t>());
+    result->reserve(solver.model.size());
+
+    for (int i = 0; i < solver.model.size(); i++) {
+        auto val = solver.model[i];
+        result->push_back(val == l_True ? 1 : (val == l_False ? -1 : 0));
+    }
+    return result;
 }
 
 std::unique_ptr<SolverStub> newSolver() {
