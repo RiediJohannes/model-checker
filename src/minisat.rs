@@ -26,6 +26,8 @@ pub mod ffi {
         fn newVar(self: Pin<&mut SolverStub>) -> Literal;
         fn addClause(self: Pin<&mut SolverStub>, clause: &[Literal]);
         fn solve(self: Pin<&mut SolverStub>) -> bool;
+        #[rust_name = "solve_with_assumptions"]
+        fn solve(self: Pin<&mut SolverStub>, assumptions: &[Literal]) -> bool;
         fn getModel(self: Pin<&mut SolverStub>) -> UniquePtr<CxxVector<i8>>;
     }
 
@@ -117,6 +119,13 @@ impl Solver {
 
     pub fn solve(&mut self) -> bool {
         self.remote().solve()
+    }
+
+    pub fn solve_assuming<L>(&mut self, assumptions: L) -> bool
+    where
+        L: AsRef<[Literal]>
+    {
+        self.remote().solve_with_assumptions(assumptions.as_ref())
     }
 
     pub fn get_model(&mut self) -> cxx::UniquePtr<cxx::CxxVector<i8>>

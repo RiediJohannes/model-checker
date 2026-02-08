@@ -14,7 +14,7 @@ Literal SolverStub::newVar() {
     return lit;
 }
 
-void SolverStub::addClause(rust::Slice<const Literal> const rustClause) {
+void SolverStub::addClause(const rust::Slice<const Literal> rustClause) {
     vec<Lit> clause;
     for (const auto& rustLit : rustClause) {
         const Lit lit = literalToLit(rustLit);
@@ -26,6 +26,16 @@ void SolverStub::addClause(rust::Slice<const Literal> const rustClause) {
 
 bool SolverStub::solve() {
     return solver.solve();
+}
+
+bool SolverStub::solve(const rust::Slice<const Literal> assumptions) {
+    vec<Lit> mapped_assumptions;
+
+    for (const auto& l : assumptions) {
+        mapped_assumptions.push(literalToLit(l));
+    }
+
+    return solver.solve(mapped_assumptions);
 }
 
 std::unique_ptr<std::vector<int8_t>> SolverStub::getModel() {
