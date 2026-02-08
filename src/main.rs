@@ -4,33 +4,29 @@ mod minisat;
 mod bmc;
 
 use std::process;
+use clap::Parser;
 
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Number of unwinding steps to the transition relation
+    k: u32,
+    /// Path to an AIGER file in ASCII format (*.aag)
+    file_path: String,
+}
 
 fn main() {
-    // TODO: Parse CLI parameters (file name and k)
+    let _args = Args::parse();
+    
+    let aiger_file = "data/combination.aag";  // args.file_path
+    let k: u32 = 2; // args.k
 
-    // Test SAT solver calls across FFI
-    // let mut solver= minisat::Solver::new();
-    //
-    // let a = solver.add_var();
-    // let b = solver.add_var();
-    // let c = solver.add_var();
-    //
-    // solver.add_clause([a]);
-    // solver.add_clause([-a, b]);
-    // solver.add_clause([-b, c]);
-    // solver.add_clause([-c, -a]);
-    //
-    // let result = solver.solve();
-    // dbg!(result);
-    // dbg!(solver.get_model());
-
-
-    let instance = bmc::load_model("data/combination.aag").unwrap_or_else(|e| {
+    let instance = bmc::load_model(aiger_file).unwrap_or_else(|e| {
         eprintln!("Parsing error: {e}");
         process::exit(1);
     });
 
-    let checking_result = instance.unwind(2).unwrap().check_bounded();
+    let checking_result = instance.unwind(k).unwrap().check_bounded();
     println!("{:?}", checking_result)
 }

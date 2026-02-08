@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 cxx = "1.0"
+clap = { version = "4.5.57", features = ["derive"] }
 thiserror = "2.0.18"
 
 [build-dependencies]
