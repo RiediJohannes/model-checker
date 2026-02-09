@@ -233,3 +233,82 @@ void Proof::traverse(ProofTraverser& trav, ClauseId goal)
     fp.seek(0, SEEK_END);
     fp.setMode(WRITE);
 }
+
+
+//============ Custom Proof Traverser ================
+#include "Sort.h"
+#include "model-checker/src/minisat.rs.h"  // import shared types
+
+inline Lit literalToLit(const Literal& l) {
+    return toLit(l.id);
+}
+
+static void resolve(vec<Lit>& main, vec<Lit>& other, Var x)
+{
+    Lit  p;
+    bool ok1 = false, ok2 = false;
+    for (int i = 0; i < main.size(); i++){
+        if (var(main[i]) == x){
+            ok1 = true, p = main[i];
+            main[i] = main.last();
+            main.pop();
+            break;
+        }
+    }
+
+    for (int i = 0; i < other.size(); i++){
+        if (var(other[i]) != x)
+            main.push(other[i]);
+        else{
+            if (p != ~other[i])
+                printf("PROOF ERROR! Resolved on variable with SAME polarity in both clauses: %d\n", x+1);
+            ok2 = true;
+        }
+    }
+
+    if (!ok1 || !ok2)
+        printf("PROOF ERROR! Resolved on missing variable: %d\n", x+1);
+
+    sortUnique(main);
+}
+
+void CallbackTraverser::root(const vec<Lit>& c) {
+    printf("ROOT");
+    // for (int i = 0; i < c.size(); i++) printf(" %s%d", sign(c[i]) ? "-" : "", var(c[i])+1);
+    for (int i = 0; i < c.size(); i++) printf(" %d", index(c[i]));
+    printf("\n");
+
+    clauses.push();
+    c.copyTo(clauses.last());
+
+    // Notify the resolution proof store of the new clause
+    std::vector<int32_t> raw_lits;
+    raw_lits.reserve(c.size());
+
+    for (int i = 0; i < c.size(); i++) {
+        raw_lits.push_back(index(c[i]));
+    }
+    const rust::Slice<const int32_t> lits_slice(raw_lits.data(), raw_lits.size());
+    resolution.notify_clause(clauses.size() - 1, lits_slice);
+}
+
+void CallbackTraverser::chain(const vec<ClauseId>& cs, const vec<Var>& xs) {
+    printf("CHAIN %d", cs[0]);
+    for (int i = 0; i < xs.size(); i++) printf(" [%d] %d", xs[i]+1, cs[i+1]);
+    printf("\n");
+
+    clauses.push();
+    vec<Lit>& c = clauses.last();
+    clauses[cs[0]].copyTo(c);
+    for (int i = 0; i < xs.size(); i++) {
+        resolve(c, clauses[cs[i+1]], xs[i]);
+    }
+}
+
+void CallbackTraverser::deleted(ClauseId c) {
+    // clauses[c].clear();
+}
+
+void CallbackTraverser::done() {
+    printf("Done traversing.\n");
+}

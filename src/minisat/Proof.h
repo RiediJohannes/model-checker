@@ -20,6 +20,8 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #ifndef Proof_h
 #define Proof_h
 
+#include <cstdint>
+
 #include "SolverTypes.h"
 #include "File.h"
 
@@ -27,7 +29,7 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 //=================================================================================================
 
 
-// A "listner" for the proof. Proof events will be passed onto (online mode) or replayed to
+// A "listener" for the proof. Proof events will be passed onto (online mode) or replayed to
 // (offline mode) this class.  Each call to 'root()' or 'chain()' produces a new clause. The first
 // clause has ID 0, the next 1 and so on. These are the IDs passed to 'chain()'s 'cs' parameter.
 //
@@ -36,7 +38,26 @@ struct ProofTraverser {
     virtual void chain  (const vec<ClauseId>& cs, const vec<Var>& xs) {}
     virtual void deleted(ClauseId c) {}
     virtual void done   () {}
-    virtual ~ProofTraverser() {}
+    virtual ~ProofTraverser() = default;
+};
+
+
+struct ResolutionProof;
+
+class CallbackTraverser : public ProofTraverser {
+    ResolutionProof& resolution; // The bridge to Rust
+    uint32_t next_id = 0;
+
+public:
+    // Constructor that takes the reference
+    CallbackTraverser(ResolutionProof& proofStore) : resolution(proofStore) {}
+
+    void root   (const vec<Lit>& c) override;
+    void chain  (const vec<ClauseId>& cs, const vec<Var>& xs) override;
+    void deleted(ClauseId c) override;
+    void done   () override;
+private:
+    vec<vec<Lit>>  clauses;
 };
 
 
@@ -51,7 +72,7 @@ class Proof {
     vec<Var>        chain_var;
 
 public:
-    Proof();                        // Offline mode -- proof stored to a file, which can be saved, compressed, and/or traversed.
+    Proof();                        // Offline mode -- proof stored in a file, which can be saved, compressed, and/or traversed.
     Proof(ProofTraverser& t);       // Online mode -- proof will not be stored.
 
     ClauseId addRoot   (vec<Lit>& clause);
@@ -59,7 +80,7 @@ public:
     void     resolve   (ClauseId next, Var x);
     ClauseId endChain  ();
     void     deleted   (ClauseId gone);
-    ClauseId last      () { assert(id_counter != ClauseId_NULL); return id_counter - 1; }
+    ClauseId last      () const { assert(id_counter != ClauseId_NULL); return id_counter - 1; }
 
     void     compress  (Proof& dst, ClauseId goal = ClauseId_NULL);     // 'dst' should be a newly constructed, empty proof.
     bool     save      (cchar* filename);

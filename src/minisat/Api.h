@@ -7,10 +7,12 @@
 #include "rust/cxx.h"  // needed to define shared types
 
 struct Literal;        // full definition in minisat.rs
+struct ResolutionProof;  // full definition in minisat.rs
 
 class SolverStub {
 public:
-    SolverStub();
+    SolverStub(ResolutionProof& proofStore);
+    ~SolverStub();
 
     Literal newVar();
     void addClause(rust::Slice<const Literal> clause);  // Linter complains about unknown namespace but header is (and must be) included in Api.C
@@ -20,6 +22,7 @@ public:
 
 private:
     Solver solver;
+    CallbackTraverser traverser;
 };
 
-std::unique_ptr<SolverStub> newSolver();
+std::unique_ptr<SolverStub> newSolver(ResolutionProof& resolution);

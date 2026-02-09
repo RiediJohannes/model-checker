@@ -21,8 +21,7 @@ pub mod ffi {
         type SolverStub;
 
         // Functions implemented in C++.
-        fn newSolver() -> UniquePtr<SolverStub>;
-
+        fn newSolver(proof_store: &mut ResolutionProof) -> UniquePtr<SolverStub>;
         fn newVar(self: Pin<&mut SolverStub>) -> Literal;
         fn addClause(self: Pin<&mut SolverStub>, clause: &[Literal]);
         fn solve(self: Pin<&mut SolverStub>) -> bool;
@@ -31,12 +30,12 @@ pub mod ffi {
         fn getModel(self: Pin<&mut SolverStub>) -> UniquePtr<CxxVector<i8>>;
     }
 
-    // Potential Rust types that shall be visible to C++
-    // extern "Rust" {
-    //     type MultiBuf;
-    //
-    //     fn next_chunk(buf: &mut MultiBuf) -> &[u8];
-    // }
+    // Rust functions visible in C++
+    extern "Rust" {
+        type ResolutionProof;
+        fn notify_clause(self: &mut ResolutionProof, id: u32, lits: &[i32]);
+        fn notify_resolution(self: &mut ResolutionProof, left: u32, right: u32, pivot: i32, result: u32);
+    }
 }
 
 impl Literal {
@@ -93,12 +92,16 @@ impl From<i32> for Literal {
 /// Thin wrapper around [SolverStub] to offer a more developer-friendly interface.
 pub struct Solver {
     stub: cxx::UniquePtr<SolverStub>,
+    resolution: ResolutionProof,
 }
 
 impl Solver {
     pub fn new() -> Self {
+        let mut resolution= ResolutionProof::new();
+
         Self {
-            stub: ffi::newSolver(),
+            stub: ffi::newSolver(&mut resolution),
+            resolution,
         }
     }
 
@@ -136,5 +139,23 @@ impl Solver {
     /// Quick and idiomatic access to a pinned mutable reference of the underlying solver.
     fn remote(&mut self) -> Pin<&mut SolverStub> {
         self.stub.pin_mut()
+    }
+}
+
+
+pub struct ResolutionProof {
+    clauses: Vec<u32>,
+    // nodes: Vec<ProofNode>, // Your custom enum/struct
+}
+impl ResolutionProof {
+    pub fn new() -> Self {
+        Self { clauses: Vec::new() }
+    }
+
+    pub fn notify_clause(self: &mut ResolutionProof, id: u32, lits: &[i32]) {
+        dbg!(id, lits);
+    }
+    pub fn notify_resolution(self: &mut ResolutionProof, left: u32, right: u32, pivot: i32, result: u32) {
+        dbg!(left, right, pivot, result);
     }
 }

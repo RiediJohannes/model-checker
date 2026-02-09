@@ -6,7 +6,11 @@ inline Lit literalToLit(const Literal& l) {
     return toLit(l.id);
 }
 
-SolverStub::SolverStub() = default;
+SolverStub::SolverStub(ResolutionProof& proofStore)
+    : traverser(proofStore)
+{
+    solver.proof = new Proof(traverser);
+}
 
 Literal SolverStub::newVar() {
     const int nextVar = solver.newVar();
@@ -26,6 +30,7 @@ void SolverStub::addClause(const rust::Slice<const Literal> rustClause) {
 
 bool SolverStub::solve() {
     return solver.solve();
+    // if (!isSat && solver.proof != nullptr) solver.proof->save("proof.txt");
 }
 
 bool SolverStub::solve(const rust::Slice<const Literal> assumptions) {
@@ -50,6 +55,13 @@ std::unique_ptr<std::vector<int8_t>> SolverStub::getModel() {
     return result;
 }
 
-std::unique_ptr<SolverStub> newSolver() {
-    return std::unique_ptr<SolverStub>(new SolverStub());
+std::unique_ptr<SolverStub> newSolver(ResolutionProof& proofStore) {
+    return std::unique_ptr<SolverStub>(new SolverStub(proofStore));
+}
+
+SolverStub::~SolverStub() {
+    if (solver.proof != nullptr) {
+        delete solver.proof;
+        solver.proof = nullptr;
+    }
 }
