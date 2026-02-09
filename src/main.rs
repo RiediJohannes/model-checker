@@ -21,8 +21,8 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    let aiger_file = "data/combination.aag";  // args.file_path
-    let k: u32 = 1; // args.k
+    let aiger_file = "data/count10.aag";  // args.file_path
+    let k: u32 = 6; // args.k
 
     let instance = bmc::load_model(aiger_file).unwrap_or_else(|e| {
         eprintln!("Parsing error: {e}");

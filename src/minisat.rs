@@ -34,7 +34,7 @@ pub mod ffi {
     extern "Rust" {
         type ResolutionProof;
         fn notify_clause(self: &mut ResolutionProof, id: u32, lits: &[i32]);
-        fn notify_resolution(self: &mut ResolutionProof, left: u32, right: u32, pivot: i32, result: u32);
+        fn notify_resolution(self: &mut ResolutionProof, resolution_id: i32, left: i32, right: i32, pivot: i32, resolvent: &[i32]);
     }
 }
 
@@ -155,7 +155,7 @@ impl ResolutionProof {
     pub fn notify_clause(self: &mut ResolutionProof, id: u32, lits: &[i32]) {
         dbg!(id, lits);
     }
-    pub fn notify_resolution(self: &mut ResolutionProof, left: u32, right: u32, pivot: i32, result: u32) {
-        dbg!(left, right, pivot, result);
+    pub fn notify_resolution(self: &mut ResolutionProof, resolution_id: i32, left: i32, right: i32, pivot: i32, resolvent: &[i32]) {
+        dbg!(resolution_id, left, right, pivot, resolvent);
     }
 }

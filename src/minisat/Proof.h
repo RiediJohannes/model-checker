@@ -45,19 +45,18 @@ struct ProofTraverser {
 struct ResolutionProof;
 
 class CallbackTraverser : public ProofTraverser {
-    ResolutionProof& resolution; // The bridge to Rust
-    uint32_t next_id = 0;
-
 public:
     // Constructor that takes the reference
-    CallbackTraverser(ResolutionProof& proofStore) : resolution(proofStore) {}
+    explicit CallbackTraverser(ResolutionProof& proofStore) : resolution(proofStore) {}
 
     void root   (const vec<Lit>& c) override;
     void chain  (const vec<ClauseId>& cs, const vec<Var>& xs) override;
     void deleted(ClauseId c) override;
     void done   () override;
 private:
-    vec<vec<Lit>>  clauses;
+    ResolutionProof& resolution;
+    vec<vec<Lit>>    clauses;
+    int32_t          resolvent_id = 0;
 };
 
 

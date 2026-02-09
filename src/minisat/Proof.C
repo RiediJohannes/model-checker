@@ -239,8 +239,27 @@ void Proof::traverse(ProofTraverser& trav, ClauseId goal)
 #include "Sort.h"
 #include "model-checker/src/minisat.rs.h"  // import shared types
 
-inline Lit literalToLit(const Literal& l) {
-    return toLit(l.id);
+/// Converts a clause c to a Rust slice of i32
+rust::Slice<const int32_t> toSlice(const vec<Lit>& c) {
+    std::vector<int32_t> raw_lits;
+    raw_lits.reserve(c.size());
+
+    for (int i = 0; i < c.size(); i++) {
+        raw_lits.push_back(index(c[i]));
+    }
+
+    return rust::Slice<const int32_t>(raw_lits.data(), raw_lits.size());
+}
+
+inline rust::Slice<const int32_t> toSlice(const vec<Lit>& c, std::vector<int32_t>& storage) {
+    storage.clear();
+    storage.reserve(c.size());
+
+    for (int i = 0; i < c.size(); ++i) {
+        storage.push_back(index(c[i]));
+    }
+
+    return rust::Slice<const int32_t>(storage.data(), storage.size());
 }
 
 static void resolve(vec<Lit>& main, vec<Lit>& other, Var x)
@@ -283,13 +302,7 @@ void CallbackTraverser::root(const vec<Lit>& c) {
 
     // Notify the resolution proof store of the new clause
     std::vector<int32_t> raw_lits;
-    raw_lits.reserve(c.size());
-
-    for (int i = 0; i < c.size(); i++) {
-        raw_lits.push_back(index(c[i]));
-    }
-    const rust::Slice<const int32_t> lits_slice(raw_lits.data(), raw_lits.size());
-    resolution.notify_clause(clauses.size() - 1, lits_slice);
+    resolution.notify_clause(clauses.size() - 1, toSlice(c, raw_lits));
 }
 
 void CallbackTraverser::chain(const vec<ClauseId>& cs, const vec<Var>& xs) {
@@ -300,8 +313,18 @@ void CallbackTraverser::chain(const vec<ClauseId>& cs, const vec<Var>& xs) {
     clauses.push();
     vec<Lit>& c = clauses.last();
     clauses[cs[0]].copyTo(c);
+
     for (int i = 0; i < xs.size(); i++) {
         resolve(c, clauses[cs[i+1]], xs[i]);
+
+        // If we are not in the first iteration any more, then the left resolution parent is the previous resolvent
+        const int left_parent_id = i == 0 ? cs[0] : resolvent_id;
+        // The last resolution step in a chain yields a new clause with a non-negative ID
+        // In-between results of resolution chains get negative IDs instead (decrement previous resolvent_id)
+        const int result_id = i == xs.size() - 1 ? clauses.size() - 1 : --resolvent_id;
+
+        std::vector<int32_t> raw_lits;
+        resolution.notify_resolution(result_id, left_parent_id, cs[i+1], xs[i]+1, toSlice(c, raw_lits));
     }
 }
 
