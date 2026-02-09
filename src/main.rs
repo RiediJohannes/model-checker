@@ -14,19 +14,28 @@ struct Args {
     k: u32,
     /// Path to an AIGER file in ASCII format (*.aag)
     file_path: String,
+    #[clap(long, short, action)]
+    interpolate: bool,
 }
 
 fn main() {
-    let _args = Args::parse();
-    
+    let args = Args::parse();
+
     let aiger_file = "data/combination.aag";  // args.file_path
-    let k: u32 = 2; // args.k
+    let k: u32 = 1; // args.k
 
     let instance = bmc::load_model(aiger_file).unwrap_or_else(|e| {
         eprintln!("Parsing error: {e}");
         process::exit(1);
     });
 
-    let checking_result = instance.unwind(k).unwrap().check_bounded();
-    println!("{:?}", checking_result)
+    let checking_result = match args.interpolate {
+        false => bmc::check_bounded(&instance, k),
+        true => bmc::check_interpolated(&instance, k)
+    };
+
+    match checking_result {
+        Ok(conclusion) => println!("{:?}", conclusion),
+        Err(e) => eprintln!("ERROR: {e}")
+    }
 }
