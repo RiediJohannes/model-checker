@@ -109,8 +109,8 @@ impl BmcModel<'_> {
     fn signal_at_time(&mut self, signal: &Signal, time: u32) -> Result<Literal, ModelCheckingError> {
         match signal {
             // For the constant signals, always return the same fixed literal (irrespective of the time step)
-            Signal::Constant(true) => Ok(TOP.into()),
-            Signal::Constant(false) => Ok(BOTTOM.into()),
+            Signal::Constant(true) => Ok(Literal::from_var(TOP)),
+            Signal::Constant(false) => Ok(Literal::from_var(BOTTOM)),
             Signal::Var(aig_var) => {
                 if let Some(step_vars) = self.time_steps.get_mut(time as usize) {
                     let lit = *step_vars.entry(aig_var.idx()).or_insert_with(||self.solver.add_var());

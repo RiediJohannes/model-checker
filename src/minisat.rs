@@ -1,9 +1,9 @@
+use cxx::{CxxVector, UniquePtr};
+pub use ffi::Literal;
 use ffi::SolverStub;
 use std::fmt::Display;
 use std::ops::Neg;
 use std::pin::Pin;
-
-pub use ffi::Literal;
 
 #[cxx::bridge]
 pub mod ffi {
@@ -33,12 +33,17 @@ pub mod ffi {
     // Rust functions visible in C++
     extern "Rust" {
         type ResolutionProof;
-        fn notify_clause(self: &mut ResolutionProof, id: u32, lits: &[i32]);
+        // fn notify_clause(self: &mut ResolutionProof, id: u32, lits: &[i32]);
+        fn notify_clause(self: &mut ResolutionProof, id: u32, lits: UniquePtr<CxxVector<i32>>);
         fn notify_resolution(self: &mut ResolutionProof, resolution_id: i32, left: i32, right: i32, pivot: i32, resolvent: &[i32]);
     }
 }
 
 impl Literal {
+    pub fn from_var(var: i32) -> Self {
+        Self { id: var << 1 }
+    }
+
     pub fn var(&self) -> i32 {
         self.id >> 1
     }
@@ -65,39 +70,20 @@ impl Display for Literal {
 
 impl From<i32> for Literal {
     fn from(i: i32) -> Self {
-        Literal { id: i << 1 }
+        Literal { id: i }
     }
 }
-
-// #[derive(Debug)]
-// pub struct Clause {
-//     lits: Box<[Literal]>,
-// }
-//
-// impl Clause {
-//     pub fn new<I>(lits: I) -> Self
-//     where
-//         I: IntoIterator<Item = Literal>,
-//     {
-//         let v: Vec<Literal> = lits.into_iter().collect();
-//         Clause::from_vec(v)
-//     }
-//
-//     pub fn from_vec(v: Vec<Literal>) -> Self {
-//         Self { lits: v.into_boxed_slice() }
-//     }
-// }
 
 
 /// Thin wrapper around [SolverStub] to offer a more developer-friendly interface.
 pub struct Solver {
-    stub: cxx::UniquePtr<SolverStub>,
-    resolution: ResolutionProof,
+    stub: UniquePtr<SolverStub>,
+    resolution: Box<ResolutionProof>,  // IMPORTANT to box this member, otherwise passing its reference to C++ will lead to memory-issues!
 }
 
 impl Solver {
     pub fn new() -> Self {
-        let mut resolution= ResolutionProof::new();
+        let mut resolution = Box::new(ResolutionProof::new());
 
         Self {
             stub: ffi::newSolver(&mut resolution),
@@ -131,7 +117,7 @@ impl Solver {
         self.remote().solve_with_assumptions(assumptions.as_ref())
     }
 
-    pub fn get_model(&mut self) -> cxx::UniquePtr<cxx::CxxVector<i8>>
+    pub fn get_model(&mut self) -> UniquePtr<CxxVector<i8>>
     {
         self.remote().getModel()
     }
@@ -143,19 +129,55 @@ impl Solver {
 }
 
 
-pub struct ResolutionProof {
-    clauses: Vec<u32>,
-    // nodes: Vec<ProofNode>, // Your custom enum/struct
+#[derive(Debug)]
+pub struct Clause {
+    lits: Box<[Literal]>,
 }
-impl ResolutionProof {
-    pub fn new() -> Self {
-        Self { clauses: Vec::new() }
+
+impl Clause {
+    pub fn new<I>(lits: I) -> Self
+    where
+        I: IntoIterator<Item = Literal>,
+    {
+        let v: Vec<Literal> = lits.into_iter().collect();
+        Clause::from_vec(v)
     }
 
-    pub fn notify_clause(self: &mut ResolutionProof, id: u32, lits: &[i32]) {
-        dbg!(id, lits);
+    pub fn from_vec(v: Vec<Literal>) -> Self {
+        Self { lits: v.into_boxed_slice() }
     }
+}
+
+
+pub struct ResolutionProof {
+    root_clauses: Vec<Clause>,
+    intermediate_clauses: Vec<Clause>,
+}
+
+impl ResolutionProof {
+    pub fn new() -> Self {
+        Self {
+            root_clauses: Vec::new(),
+            intermediate_clauses: Vec::new()
+        }
+    }
+
+    // pub fn notify_clause(self: &mut ResolutionProof, id: u32, lits: &[i32]) {
+    //     let clause = Clause::new(lits.iter().map(|&lit| Literal::from(lit.clone())));
+    //     self.root_clauses.push(clause);
+    //     dbg!(id, self.root_clauses.len() - 1);
+    // }
+
+    pub fn notify_clause(&mut self, id: u32, lits: UniquePtr<CxxVector<i32>>) {
+        let clause = Clause::new(
+            lits.iter().map(|&lit| Literal::from(lit))
+        );
+
+        self.root_clauses.push(clause);
+        dbg!(id, self.root_clauses.len() - 1);
+    }
+
     pub fn notify_resolution(self: &mut ResolutionProof, resolution_id: i32, left: i32, right: i32, pivot: i32, resolvent: &[i32]) {
-        dbg!(resolution_id, left, right, pivot, resolvent);
+        // dbg!(resolution_id, left, right, pivot, resolvent);
     }
 }

@@ -239,18 +239,8 @@ void Proof::traverse(ProofTraverser& trav, ClauseId goal)
 #include "Sort.h"
 #include "model-checker/src/minisat.rs.h"  // import shared types
 
+
 /// Converts a clause c to a Rust slice of i32
-rust::Slice<const int32_t> toSlice(const vec<Lit>& c) {
-    std::vector<int32_t> raw_lits;
-    raw_lits.reserve(c.size());
-
-    for (int i = 0; i < c.size(); i++) {
-        raw_lits.push_back(index(c[i]));
-    }
-
-    return rust::Slice<const int32_t>(raw_lits.data(), raw_lits.size());
-}
-
 inline rust::Slice<const int32_t> toSlice(const vec<Lit>& c, std::vector<int32_t>& storage) {
     storage.clear();
     storage.reserve(c.size());
@@ -259,7 +249,20 @@ inline rust::Slice<const int32_t> toSlice(const vec<Lit>& c, std::vector<int32_t
         storage.push_back(index(c[i]));
     }
 
-    return rust::Slice<const int32_t>(storage.data(), storage.size());
+    return {storage.data(), storage.size()};
+}
+
+std::unique_ptr<std::vector<int32_t>> toVec(const vec<Lit>& c) {
+    std::unique_ptr<std::vector<int32_t>> out(
+        new std::vector<int32_t>()
+    );
+
+    out->reserve(c.size());
+    for (int i = 0; i < c.size(); ++i) {
+        out->push_back(index(c[i]));
+    }
+
+    return out;
 }
 
 static void resolve(vec<Lit>& main, vec<Lit>& other, Var x)
@@ -301,8 +304,8 @@ void CallbackTraverser::root(const vec<Lit>& c) {
     c.copyTo(clauses.last());
 
     // Notify the resolution proof store of the new clause
-    std::vector<int32_t> raw_lits;
-    resolution.notify_clause(clauses.size() - 1, toSlice(c, raw_lits));
+    // std::vector<int32_t> raw_lits;
+    resolution.notify_clause(clauses.size() - 1, toVec(c));
 }
 
 void CallbackTraverser::chain(const vec<ClauseId>& cs, const vec<Var>& xs) {
