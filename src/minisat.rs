@@ -149,16 +149,37 @@ impl Clause {
 }
 
 
+struct ResolutionStep {
+    left: i32,
+    right: i32,
+    pivot: Literal,
+    resolvent: i32,
+}
+impl ResolutionStep {
+    pub fn new<L>(left: i32, right: i32, pivot: L, resolvent_id: i32) -> Self
+    where L: Into<Literal>
+    {
+        Self {
+            left,
+            right,
+            pivot: pivot.into(),
+            resolvent: resolvent_id
+        }
+    }
+}
+
 pub struct ResolutionProof {
     root_clauses: Vec<Clause>,
     intermediate_clauses: Vec<Clause>,
+    resolution_steps: Vec<ResolutionStep>,
 }
 
 impl ResolutionProof {
     pub fn new() -> Self {
         Self {
             root_clauses: Vec::new(),
-            intermediate_clauses: Vec::new()
+            intermediate_clauses: Vec::new(),
+            resolution_steps: Vec::new(),
         }
     }
 
@@ -174,10 +195,22 @@ impl ResolutionProof {
         );
 
         self.root_clauses.push(clause);
-        dbg!(id, self.root_clauses.len() - 1);
+        assert_eq!(id as usize, self.root_clauses.len() - 1);
     }
 
-    pub fn notify_resolution(self: &mut ResolutionProof, resolution_id: i32, left: i32, right: i32, pivot: i32, resolvent: &[i32]) {
-        // dbg!(resolution_id, left, right, pivot, resolvent);
+    pub fn notify_resolution(self: &mut ResolutionProof, resolvent_id: i32, left: i32, right: i32, pivot: i32, resolvent: &[i32]) {
+        let resolved_clause = Clause::new(
+            resolvent.iter().map(|&lit| Literal::from(lit))
+        );
+
+        self.resolution_steps.push(ResolutionStep::new(left, right, pivot, resolvent_id));
+
+        if resolvent_id >= 0 {
+            self.root_clauses.push(resolved_clause);
+            assert_eq!(resolvent_id as usize, self.root_clauses.len() - 1);
+        } else {
+            self.intermediate_clauses.push(resolved_clause);
+            assert_eq!((-resolvent_id) as usize, self.intermediate_clauses.len());
+        }
     }
 }
