@@ -1,8 +1,8 @@
 use std::collections::{HashMap};
 use thiserror::Error;
 use crate::bmc::aiger;
-use crate::bmc::aiger::{ParseError, Signal, AIG};
-use crate::minisat::{Solver, Literal};
+use crate::bmc::aiger::{AndGate, Latch, ParseError, Signal, AIG};
+use crate::minisat::{Solver, Literal, Partition};
 
 
 #[derive(Error, Debug)]
@@ -17,6 +17,7 @@ pub enum Conclusion {
     Fail,
 }
 
+// Fixed IDs to use for SAT variables representing boolean constants
 const BOTTOM: i32 = 0;
 const TOP: i32 = 1;
 
@@ -60,9 +61,10 @@ impl BmcModel<'_> {
     pub fn from_aig(graph: &'_ AIG) -> Result<BmcModel<'_>, ModelCheckingError> {
         // Add the constant zero and constant one literal to the solver
         let mut solver = Solver::new();
+        solver.clear_partition();
+
         let bottom = solver.add_var();
         let top = solver.add_var();
-
         assert_eq!(bottom.var(), BOTTOM);
         assert_eq!(top.var(), TOP);
 
@@ -75,6 +77,7 @@ impl BmcModel<'_> {
             solver
         };
 
+        model.solver.set_partition(Partition::A);
         // Initialize variables for all signals at time step 0
         model.add_step();
         for var in graph.variables() {
@@ -83,13 +86,7 @@ impl BmcModel<'_> {
 
         // AND-gates
         for gate in graph.and_gates.iter() {
-            let out = model.signal_at_time(&gate.out, 0)?;
-            let in1 = model.signal_at_time(&gate.in1, 0)?;
-            let in2 = model.signal_at_time(&gate.in2, 0)?;
-
-            model.solver.add_clause([-in1, -in2, out]);
-            model.solver.add_clause([-out, in1]);
-            model.solver.add_clause([-out, in2]);
+            model.encode_and_gate(gate, 0)?;
         }
 
         // Latches
@@ -127,6 +124,10 @@ impl BmcModel<'_> {
         for t in 1..=k {
             self.add_step();
 
+            if t == 2 {
+                self.solver.set_partition(Partition::B);
+            }
+
             // Initialize variables for all signals at the current time step (for reasonable order)
             for var in self.graph.variables() {
                 self.signal_at_time(&Signal::Var(var), t)?;
@@ -135,33 +136,13 @@ impl BmcModel<'_> {
             // Add SAT clauses
             // AND-gates
             for gate in self.graph.and_gates.iter() {
-                let out = self.signal_at_time(&gate.out, t)?;
-                let in1 = self.signal_at_time(&gate.in1, t)?;
-                let in2 = self.signal_at_time(&gate.in2, t)?;
-
-                self.solver.add_clause([-in1, -in2, out]);
-                self.solver.add_clause([-out, in1]);
-                self.solver.add_clause([-out, in2]);
+                self.encode_and_gate(gate, t)?;
             }
 
             // Latches
             for latch in self.graph.latches.iter() {
-                let curr = self.signal_at_time(&latch.out, t)?;
-
-                // Special handling of time step 0
-                if t < 1 {
-                    self.solver.add_clause([-curr]);
-                } else {
-                    let prev = self.signal_at_time(&latch.next, t-1)?;
-
-                    self.solver.add_clause([-prev, curr]);
-                    self.solver.add_clause([-curr, prev]);
-                }
+                self.encode_latch(latch, t)?;
             }
-
-            // Debug: Add this clause to make the formula UNSAT
-            // let bottom = unwound.signal_at_time(&Signal::Constant(false), t)?;
-            // unwound.solver.add_clause([bottom]);
         }
 
         // Assert that the output is true at SOME time step -> property violation
@@ -185,6 +166,28 @@ impl BmcModel<'_> {
             },
             false => Conclusion::Ok,
         }
+    }
+
+    fn encode_and_gate(&mut self, gate: &AndGate, t: u32) -> Result<(), ModelCheckingError> {
+        let out = self.signal_at_time(&gate.out, t)?;
+        let in1 = self.signal_at_time(&gate.in1, t)?;
+        let in2 = self.signal_at_time(&gate.in2, t)?;
+
+        self.solver.add_clause([-in1, -in2, out]);
+        self.solver.add_clause([-out, in1]);
+        self.solver.add_clause([-out, in2]);
+
+        Ok(())
+    }
+
+    fn encode_latch(&mut self, latch: &Latch, t: u32) -> Result<(), ModelCheckingError> {
+        let curr = self.signal_at_time(&latch.out, t)?;
+        let prev = self.signal_at_time(&latch.next, t-1)?;
+
+        self.solver.add_clause([-prev, curr]);
+        self.solver.add_clause([-curr, prev]);
+
+        Ok(())
     }
 }
 

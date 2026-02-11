@@ -1,6 +1,7 @@
 use cxx::{CxxVector, UniquePtr};
 pub use ffi::Literal;
 use ffi::SolverStub;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::ops::Neg;
 use std::pin::Pin;
@@ -79,6 +80,7 @@ impl From<i32> for Literal {
 pub struct Solver {
     stub: UniquePtr<SolverStub>,
     resolution: Box<ResolutionProof>,  // IMPORTANT to box this member, otherwise passing its reference to C++ will lead to memory-issues!
+    solved: bool,
 }
 
 impl Solver {
@@ -88,6 +90,7 @@ impl Solver {
         Self {
             stub: ffi::newSolver(&mut resolution),
             resolution,
+            solved: false,
         }
     }
 
@@ -100,26 +103,46 @@ impl Solver {
     }
 
     pub fn add_clause<L>(&mut self, clause: L)
-    where
-        L: AsRef<[Literal]>,
+    where L: AsRef<[Literal]>
     {
         self.remote().addClause(clause.as_ref());
     }
 
+    pub fn set_partition(&mut self, partition: Partition) {
+        self.resolution.partition = Some(partition);
+    }
+
+    pub fn clear_partition(&mut self) {
+        self.resolution.partition = None;
+    }
+
     pub fn solve(&mut self) -> bool {
-        self.remote().solve()
+        self.solved = false;
+        let is_sat =self.remote().solve();
+        self.solved = true;
+
+        is_sat
     }
 
     pub fn solve_assuming<L>(&mut self, assumptions: L) -> bool
-    where
-        L: AsRef<[Literal]>
-    {
-        self.remote().solve_with_assumptions(assumptions.as_ref())
+    where L: AsRef<[Literal]> {
+        self.solved = false;
+        let is_sat = self.remote().solve_with_assumptions(assumptions.as_ref());
+        self.solved = true;
+
+        is_sat
     }
 
     pub fn get_model(&mut self) -> UniquePtr<CxxVector<i8>>
     {
         self.remote().getModel()
+    }
+
+    pub fn get_proof(&self) -> Option<&ResolutionProof> {
+        match self.solved {
+            true => Some(self.resolution.as_ref()),
+            false => None
+        }
     }
 
     /// Quick and idiomatic access to a pinned mutable reference of the underlying solver.
@@ -149,6 +172,22 @@ impl Clause {
     }
 }
 
+impl<'a> IntoIterator for &'a Clause {
+    type Item = Literal;
+    type IntoIter = std::iter::Copied<std::slice::Iter<'a, Literal>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.lits.iter().copied()
+    }
+}
+
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum Partition {
+    A,
+    B,
+}
+
 
 struct ResolutionStep {
     left: i32,
@@ -158,7 +197,7 @@ struct ResolutionStep {
 }
 impl ResolutionStep {
     pub fn new<L>(left: i32, right: i32, pivot: L, resolvent_id: i32) -> Self
-        where L: Into<Literal>
+    where L: Into<Literal>
     {
         Self {
             left,
@@ -173,27 +212,51 @@ pub struct ResolutionProof {
     root_clauses: Vec<Clause>,
     intermediate_clauses: Vec<Clause>,
     resolution_steps: Vec<ResolutionStep>,
+
+    clauses_per_partition: HashMap<Partition, HashSet<i32>>,
+    vars_per_partition: HashMap<Partition, HashSet<i32>>,
+    partition: Option<Partition>,
 }
 
 impl ResolutionProof {
     pub fn new() -> Self {
+        let mut clauses_dict = HashMap::new();
+        let mut vars_dict = HashMap::new();
+        for p in [Partition::A, Partition::B] {
+            clauses_dict.insert(p, HashSet::new());
+            vars_dict.insert(p, HashSet::new());
+        }
+
         Self {
             root_clauses: Vec::new(),
             intermediate_clauses: Vec::new(),
             resolution_steps: Vec::new(),
+
+            clauses_per_partition: clauses_dict,
+            vars_per_partition: vars_dict,
+            partition: None,
         }
     }
 
-    // pub fn notify_clause(self: &mut ResolutionProof, id: u32, lits: &[i32]) {
-    //     let clause = Clause::new(lits.iter().map(|&lit| Literal::from(lit.clone())));
-    //     self.root_clauses.push(clause);
-    //     dbg!(id, self.root_clauses.len() - 1);
-    // }
+    pub fn get_clause(&self, clause_id: i32) -> Option<&Clause> {
+        if clause_id >= 0 {
+            self.root_clauses.get(clause_id as usize)
+        } else {
+            self.intermediate_clauses.get((-clause_id) as usize)
+        }
+    }
 
     pub fn notify_clause(&mut self, id: u32, lits: &[i32]) {
         let clause = Clause::new(
             lits.iter().map(|&lit| Literal::from(lit))
         );
+
+        if let Some(partition) = self.partition {
+            self.clauses_per_partition.entry(partition).or_default().insert(id as i32);
+            for lit in &clause {
+                self.vars_per_partition.entry(partition).or_default().insert(lit.var());
+            }
+        }
 
         self.root_clauses.push(clause);
         assert_eq!(id as usize, self.root_clauses.len() - 1);
@@ -212,6 +275,17 @@ impl ResolutionProof {
         } else {
             self.intermediate_clauses.push(resolved_clause);
             assert_eq!((-resolvent_id) as usize, self.intermediate_clauses.len());
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.root_clauses.clear();
+        self.intermediate_clauses.clear();
+        self.resolution_steps.clear();
+
+        for p in [Partition::A, Partition::B] {
+            self.clauses_per_partition.entry(p).or_default().clear();
+            self.vars_per_partition.entry(p).or_default().clear();
         }
     }
 }
