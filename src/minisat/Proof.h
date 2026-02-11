@@ -21,6 +21,7 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #define Proof_h
 
 #include <cstdint>
+#include <vector>
 
 #include "SolverTypes.h"
 #include "File.h"
@@ -47,16 +48,19 @@ struct ResolutionProof;
 class CallbackTraverser : public ProofTraverser {
 public:
     // Constructor that takes the reference
-    explicit CallbackTraverser(ResolutionProof& proofStore) : resolution(proofStore) {}
+    explicit CallbackTraverser(ResolutionProof& proofStore) : resolution(proofStore) {
+        lits_temp_vec.reserve(12);
+    }
 
     void root   (const vec<Lit>& c) override;
     void chain  (const vec<ClauseId>& cs, const vec<Var>& xs) override;
     void deleted(ClauseId c) override;
     void done   () override;
 private:
-    ResolutionProof& resolution;
-    vec<vec<Lit>>    clauses;
-    int32_t          resolvent_id = 0;
+    ResolutionProof&      resolution;
+    vec<vec<Lit>>         clauses;
+    int32_t               resolvent_id = 0;
+    std::vector<int32_t>  lits_temp_vec = {};
 };
 
 

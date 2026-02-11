@@ -34,7 +34,7 @@ pub mod ffi {
     extern "Rust" {
         type ResolutionProof;
         // fn notify_clause(self: &mut ResolutionProof, id: u32, lits: &[i32]);
-        fn notify_clause(self: &mut ResolutionProof, id: u32, lits: UniquePtr<CxxVector<i32>>);
+        fn notify_clause(self: &mut ResolutionProof, id: u32, lits: &[i32]);
         fn notify_resolution(self: &mut ResolutionProof, resolution_id: i32, left: i32, right: i32, pivot: i32, resolvent: &[i32]);
     }
 }
@@ -143,6 +143,7 @@ impl Clause {
         Clause::from_vec(v)
     }
 
+    #[inline]
     pub fn from_vec(v: Vec<Literal>) -> Self {
         Self { lits: v.into_boxed_slice() }
     }
@@ -157,7 +158,7 @@ struct ResolutionStep {
 }
 impl ResolutionStep {
     pub fn new<L>(left: i32, right: i32, pivot: L, resolvent_id: i32) -> Self
-    where L: Into<Literal>
+        where L: Into<Literal>
     {
         Self {
             left,
@@ -189,7 +190,7 @@ impl ResolutionProof {
     //     dbg!(id, self.root_clauses.len() - 1);
     // }
 
-    pub fn notify_clause(&mut self, id: u32, lits: UniquePtr<CxxVector<i32>>) {
+    pub fn notify_clause(&mut self, id: u32, lits: &[i32]) {
         let clause = Clause::new(
             lits.iter().map(|&lit| Literal::from(lit))
         );

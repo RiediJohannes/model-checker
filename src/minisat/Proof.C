@@ -295,23 +295,23 @@ static void resolve(vec<Lit>& main, vec<Lit>& other, Var x)
 }
 
 void CallbackTraverser::root(const vec<Lit>& c) {
-    printf("ROOT");
-    // for (int i = 0; i < c.size(); i++) printf(" %s%d", sign(c[i]) ? "-" : "", var(c[i])+1);
-    for (int i = 0; i < c.size(); i++) printf(" %d", index(c[i]));
-    printf("\n");
+    // printf("ROOT");
+    // // for (int i = 0; i < c.size(); i++) printf(" %s%d", sign(c[i]) ? "-" : "", var(c[i])+1);
+    // for (int i = 0; i < c.size(); i++) printf(" %d", index(c[i]));
+    // printf("\n");
 
     clauses.push();
     c.copyTo(clauses.last());
 
     // Notify the resolution proof store of the new clause
-    // std::vector<int32_t> raw_lits;
-    resolution.notify_clause(clauses.size() - 1, toVec(c));
+    const auto temp_lits_slice = toSlice(c, lits_temp_vec);
+    resolution.notify_clause(clauses.size() - 1, temp_lits_slice);
 }
 
 void CallbackTraverser::chain(const vec<ClauseId>& cs, const vec<Var>& xs) {
-    printf("CHAIN %d", cs[0]);
-    for (int i = 0; i < xs.size(); i++) printf(" [%d] %d", xs[i]+1, cs[i+1]);
-    printf("\n");
+    // printf("CHAIN %d", cs[0]);
+    // for (int i = 0; i < xs.size(); i++) printf(" [%d] %d", xs[i]+1, cs[i+1]);
+    // printf("\n");
 
     clauses.push();
     vec<Lit>& c = clauses.last();
@@ -326,8 +326,8 @@ void CallbackTraverser::chain(const vec<ClauseId>& cs, const vec<Var>& xs) {
         // In-between results of resolution chains get negative IDs instead (decrement previous resolvent_id)
         const int result_id = i == xs.size() - 1 ? clauses.size() - 1 : --resolvent_id;
 
-        std::vector<int32_t> raw_lits;
-        resolution.notify_resolution(result_id, left_parent_id, cs[i+1], xs[i]+1, toSlice(c, raw_lits));
+        const auto temp_lits_slice = toSlice(c, lits_temp_vec);
+        resolution.notify_resolution(result_id, left_parent_id, cs[i+1], xs[i]+1, temp_lits_slice);
     }
 }
 
@@ -336,5 +336,5 @@ void CallbackTraverser::deleted(ClauseId c) {
 }
 
 void CallbackTraverser::done() {
-    printf("Done traversing.\n");
+    // printf("\nDone traversing.\n===============");
 }
