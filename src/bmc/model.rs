@@ -2,7 +2,7 @@ use std::collections::{HashMap};
 use thiserror::Error;
 use crate::bmc::aiger;
 use crate::bmc::aiger::{AndGate, Latch, ParseError, Signal, AIG};
-use crate::minisat::{Solver, Literal, Partition, CNF};
+use crate::minisat::{Solver, Literal, Partition, XCNF};
 
 
 #[derive(Error, Debug)]
@@ -179,8 +179,8 @@ impl BmcModel<'_> {
     }
 
     #[allow(non_snake_case)]
-    pub fn compute_interpolant(&self) -> Option<CNF> {
-        let mut interpolants: HashMap<i32,CNF> = HashMap::new();
+    pub fn compute_interpolant(&mut self) -> Option<XCNF> {
+        let mut interpolants: HashMap<i32, XCNF> = HashMap::new();
         let proof = self.solver.get_proof()?;
 
         // Base case: Annotate root clauses in partition A/B with Bottom/Top
@@ -197,44 +197,43 @@ impl BmcModel<'_> {
 
         // Inductive case: Compute new part. interpolant from previous part. interpolants
         for step in proof.resolutions() {
-            let I_L: &CNF = interpolants.get(&step.left).unwrap();
-            let I_R: &CNF = interpolants.get(&step.right).unwrap();
+            let I_L: &XCNF = interpolants.get(&step.left).unwrap();
+            let I_R: &XCNF = interpolants.get(&step.right).unwrap();
             assert!(!interpolants.contains_key(&step.resolvent));
 
             let pivot_partition = proof.var_partition(step.pivot)?;
             // TODO Merge interpolants (three case split)
-            let I_resolvent: CNF = match pivot_partition {
+            let I_resolvent: XCNF = match pivot_partition {
                 Partition::A => {
                     // I_L OR I_R
                     if I_L == TRUE || I_R == TRUE {
-                        CNF::from(TRUE)
+                        XCNF::from(TRUE)
                     } else if I_L == FALSE {
                         (*I_R).clone()
                     } else if I_R == FALSE {
                         (*I_L).clone()
                     }  else {
-                        // TODO Tseitin OR gate transformation
-                        CNF::from(FALSE)
+                        self.solver.tseitin_or(I_L, I_R)
                     }
                 },
                 Partition::B => {
                     // I_L AND I_R
                     if I_L == FALSE || I_R == FALSE {
-                        CNF::from(FALSE)
+                        XCNF::from(FALSE)
                     } else if I_L == TRUE {
                         (*I_R).clone()
                     } else if I_R == TRUE {
                         (*I_L).clone()
                     }  else {
-                        // TODO Tseitin AND gate transformation
-                        CNF::from(FALSE)
+                        self.solver.tseitin_and(I_L, I_R)
                     }
                 },
                 Partition::AB => {
                     // (I_L OR x) AND (I_R OR ~x)
-                    // TODO 2x Tseitin OR, then Tseitin AND
+                    let left_conjunct = self.solver.tseitin_or(I_L, &XCNF::from(step.pivot));
+                    let right_conjunct = self.solver.tseitin_or(I_L, &XCNF::from(step.pivot));
 
-                    CNF::from(FALSE)
+                    self.solver.tseitin_and(&left_conjunct, &right_conjunct)
                 }
             };
 
@@ -337,4 +336,3 @@ fn print_input_trace(graph: &AIG, model: &[i8]) {
     }
     println!("=====================================\n");
 }
-

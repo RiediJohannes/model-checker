@@ -3,7 +3,7 @@ pub use ffi::Literal;
 use ffi::SolverStub;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
-use std::ops::Neg;
+use std::ops::{BitAnd, Index, Neg};
 use std::pin::Pin;
 
 #[cxx::bridge]
@@ -75,7 +75,8 @@ impl From<i32> for Literal {
 }
 
 
-/// Thin wrapper around [SolverStub] to offer a more developer-friendly interface.
+/// Thin wrapper around [SolverStub] to offer a more developer-friendly interface, plus some additional
+/// methods for logic formula transformations.
 pub struct Solver {
     stub: UniquePtr<SolverStub>,
     resolution: Box<ResolutionProof>,  // IMPORTANT to box this member, otherwise passing its reference to C++ will lead to memory-issues!
@@ -144,6 +145,32 @@ impl Solver {
         }
     }
 
+    pub fn tseitin_or(&mut self, left: &XCNF, right: &XCNF) -> XCNF {
+        let tseitin_lit: Literal = self.add_var();
+        let tseitin_clauses: CNF = {
+            let c1 = &Clause::new([-left.out_lit, tseitin_lit]);
+            let c2 = &Clause::new( [-right.out_lit, tseitin_lit]);
+            let c3 = &Clause::new([-tseitin_lit, left.out_lit, right.out_lit]);
+            c1 & c2 & c3
+        };
+
+        let clauses = &left.clauses & &right.clauses & &tseitin_clauses;
+        XCNF::new(clauses, tseitin_lit)
+    }
+
+    pub fn tseitin_and(&mut self, left: &XCNF, right: &XCNF) -> XCNF {
+        let tseitin_lit: Literal = self.add_var();
+        let tseitin_clauses: CNF = {
+            let c1 = &Clause::new([-tseitin_lit, left.out_lit]);
+            let c2 = &Clause::new( [-tseitin_lit, right.out_lit]);
+            let c3 = &Clause::new([-left.out_lit, -right.out_lit, tseitin_lit]);
+            c1 & c2 & c3
+        };
+
+        let clauses = &left.clauses & &right.clauses & &tseitin_clauses;
+        XCNF::new(clauses, tseitin_lit)
+    }
+
     /// Quick and idiomatic access to a pinned mutable reference of the underlying solver.
     fn remote(&mut self) -> Pin<&mut SolverStub> {
         self.stub.pin_mut()
@@ -180,26 +207,111 @@ impl<'a> IntoIterator for &'a Clause {
     }
 }
 
-pub type CNF = Vec<Clause>;
+impl BitAnd<&Clause> for &Clause {
+    type Output = CNF;
+    fn bitand(self, rhs: &Clause) -> Self::Output {
+        CNF::from(vec![self.clone(), rhs.clone()])
+    }
+}
 
-impl PartialEq<Literal> for CNF {
-    fn eq(&self, lit: &Literal) -> bool {
-        self.len() == 1 && self[0].lits.len() == 1 && self[0].lits[0] == *lit
+
+#[derive(Debug,Clone)]
+pub struct CNF {
+    pub clauses: Vec<Clause>,
+}
+
+impl CNF {
+    pub fn len(&self) -> usize {
+        self.clauses.len()
+    }
+}
+impl Index<usize> for CNF {
+    type Output = Clause;
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.clauses[index]
     }
 }
 impl PartialEq<Literal> for &CNF {
     fn eq(&self, lit: &Literal) -> bool {
-        self.len() == 1 && self[0].lits.len() == 1 && self[0].lits[0] == *lit
+        self.clauses.len() == 1
+            && self.clauses[0].lits.len() == 1
+            && self.clauses[0].lits[0] == *lit
+    }
+}
+impl From<Vec<Clause>> for CNF {
+    fn from(clauses: Vec<Clause>) -> Self {
+        Self { clauses }
     }
 }
 impl From<Literal> for CNF {
     fn from(lit: Literal) -> Self {
-        vec![Clause::new([lit])]
+        CNF::from(vec![Clause::new([lit])])
     }
 }
 impl From<Clause> for CNF {
     fn from(clause: Clause) -> Self {
-        vec![clause]
+        CNF::from(vec![clause])
+    }
+}
+impl BitAnd<&Clause> for CNF {
+    type Output = CNF;
+    fn bitand(self, rhs: &Clause) -> Self::Output {
+        let mut merged_vec = Vec::with_capacity(self.clauses.len() + 1);
+        merged_vec.extend_from_slice(&self.clauses);
+        merged_vec.push(rhs.clone());
+        CNF::from(merged_vec)
+    }
+}
+impl BitAnd<&CNF> for CNF {
+    type Output = CNF;
+    fn bitand(self, rhs: &CNF) -> Self::Output {
+        let mut merged_vec = Vec::with_capacity(self.clauses.len() + rhs.clauses.len());
+        merged_vec.extend_from_slice(&self.clauses);
+        merged_vec.extend_from_slice(&rhs.clauses);
+        CNF::from(merged_vec)
+    }
+}
+impl BitAnd<&Clause> for &CNF {
+    type Output = CNF;
+
+    fn bitand(self, rhs: &Clause) -> Self::Output {
+        self.clone() & rhs
+    }
+}
+impl BitAnd<&CNF> for &CNF {
+    type Output = CNF;
+    fn bitand(self, rhs: &CNF) -> Self::Output {
+        self.clone() & rhs
+    }
+}
+
+
+/// Short for Extended CNF.</br>
+/// Extends a formula in CNF by an output tseitin literal that is true iff the formula is satisfiable.
+#[derive(Debug,Clone)]
+pub struct XCNF {
+    pub clauses: CNF,
+    pub out_lit: Literal
+}
+
+impl XCNF {
+    pub fn new(clauses: CNF, output_literal: Literal) -> Self {
+        Self {
+            clauses,
+            out_lit: output_literal
+        }
+    }
+}
+impl PartialEq<Literal> for &XCNF {
+    fn eq(&self, lit: &Literal) -> bool {
+        self.clauses.len() == 1
+            && self.clauses[0].lits.len() == 1
+            && self.clauses[0].lits[0] == *lit
+    }
+}
+impl From<Literal> for XCNF {
+    fn from(lit: Literal) -> Self {
+        Self::new(vec![Clause::new([lit])].into(), lit)
     }
 }
 
