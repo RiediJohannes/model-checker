@@ -34,7 +34,6 @@ pub mod ffi {
     // Rust functions visible in C++
     extern "Rust" {
         type ResolutionProof;
-        // fn notify_clause(self: &mut ResolutionProof, id: u32, lits: &[i32]);
         fn notify_clause(self: &mut ResolutionProof, id: u32, lits: &[i32]);
         fn notify_resolution(self: &mut ResolutionProof, resolution_id: i32, left: i32, right: i32, pivot: i32, resolvent: &[i32]);
     }
@@ -181,19 +180,27 @@ impl<'a> IntoIterator for &'a Clause {
     }
 }
 
+pub type CNF = Vec<Clause>;
+
+#[inline]
+pub fn cnf_from_unit(lit: Literal) -> CNF {
+    vec![Clause::new([lit])]
+}
+
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Partition {
     A,
     B,
+    AB
 }
 
 
-struct ResolutionStep {
-    left: i32,
-    right: i32,
-    pivot: Literal,
-    resolvent: i32,
+pub struct ResolutionStep {
+    pub left: i32,
+    pub right: i32,
+    pub pivot: Literal,
+    pub resolvent: i32,
 }
 impl ResolutionStep {
     pub fn new<L>(left: i32, right: i32, pivot: L, resolvent_id: i32) -> Self
@@ -244,6 +251,37 @@ impl ResolutionProof {
         } else {
             self.intermediate_clauses.get((-clause_id) as usize)
         }
+    }
+
+    pub fn clauses_in_partition(&self, partition: Partition) -> impl Iterator<Item = &i32> {
+        self.clauses_per_partition
+            .get(&partition)
+            .into_iter()    // Option -> Iterator (0 or 1 item)
+            .flat_map(|ids| ids.iter())
+            // Optionally query the clause also
+            // .filter_map(move |&id| {
+            //     self.get_clause(id).map(|clause| (id, clause))
+            // })
+    }
+
+    pub fn var_partition(&self, lit: Literal) -> Option<Partition> {
+        let var = lit.var();
+        let in_a = self.vars_per_partition[&Partition::A].contains(&var);
+        let in_b = self.vars_per_partition[&Partition::B].contains(&var);
+
+        if in_a && in_b {
+            return Some(Partition::AB);
+        } else if in_a {
+            return Some(Partition::A);
+        } else if in_b {
+            return Some(Partition::B);
+        }
+
+        None
+    }
+
+    pub fn resolutions(&self) -> impl Iterator<Item = &ResolutionStep> {
+        self.resolution_steps.iter()
     }
 
     pub fn notify_clause(&mut self, id: u32, lits: &[i32]) {

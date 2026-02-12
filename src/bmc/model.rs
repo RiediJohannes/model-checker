@@ -2,7 +2,7 @@ use std::collections::{HashMap};
 use thiserror::Error;
 use crate::bmc::aiger;
 use crate::bmc::aiger::{AndGate, Latch, ParseError, Signal, AIG};
-use crate::minisat::{Solver, Literal, Partition};
+use crate::minisat::{Solver, Literal, Partition, CNF, cnf_from_unit};
 
 
 #[derive(Error, Debug)]
@@ -11,7 +11,7 @@ pub enum ModelCheckingError {
     InvalidTimeStep(u32, u32),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Conclusion {
     Ok,
     Fail,
@@ -34,7 +34,7 @@ pub fn check_bounded(graph: &AIG, k: u32) -> Result<Conclusion,ModelCheckingErro
     Ok(bmc.check())
 }
 
-pub fn check_interpolated(_graph: &AIG, _initial_k: u32) -> Result<Conclusion,ModelCheckingError> {
+pub fn check_interpolated(graph: &AIG, initial_k: u32) -> Result<Conclusion,ModelCheckingError> {
     // TODO Implement interpolation loop until fixpoint
     // unwound_model <- unwind initial k with initial states Q^0(s0)
     // I(s1) <- split formula into partitions (A,B) and compute interpolant I(s1)
@@ -47,6 +47,16 @@ pub fn check_interpolated(_graph: &AIG, _initial_k: u32) -> Result<Conclusion,Mo
     //      - from new initial states, unwind k times
     //      - This means, we need to be able to initialize a BmcModel with the respective initial states
     // }
+
+    // Single iteration of bounded model checking
+    let mut bmc = BmcModel::from_aig(graph)?;
+    bmc.unwind(initial_k)?;
+
+    if bmc.check() == Conclusion::Ok {
+        return Ok(Conclusion::Ok);
+    }
+
+    let _interpolant = bmc.compute_interpolant();
 
     Ok(Conclusion::Ok)
 }
@@ -159,13 +169,62 @@ impl BmcModel<'_> {
         // If the formula is SAT, the model's property was violated
         match self.solver.solve() {
             true => {
-                // let model = self.solver.get_model();
+                let model = self.solver.get_model();
                 // print_sat_model(self.graph, model.as_slice());
-                // print_input_trace(self.graph, model.as_slice());
+                print_input_trace(self.graph, model.as_slice());
                 Conclusion::Fail
             },
-            false => Conclusion::Ok,
+            false => Conclusion::Ok
         }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn compute_interpolant(&self) -> Option<CNF> {
+        let mut interpolants: HashMap<i32,CNF> = HashMap::new();
+        let proof = self.solver.get_proof()?;
+
+        // Base case: Annotate root clauses in partition A/B with Bottom/Top
+        for A_clause_id in proof.clauses_in_partition(Partition::A) {
+            interpolants.insert(*A_clause_id, cnf_from_unit(Literal::from_var(BOTTOM)));
+        }
+
+        for B_clause_id in proof.clauses_in_partition(Partition::B) {
+            interpolants.insert(*B_clause_id, cnf_from_unit(Literal::from_var(TOP)));
+        }
+
+        // Inductive case: Compute new part. interpolant from previous part. interpolants
+        for step in proof.resolutions() {
+            let left_itp = interpolants.get(&step.left).unwrap();
+            let right_itp = interpolants.get(&step.right).unwrap();
+            assert!(!interpolants.contains_key(&step.resolvent));
+
+            let pivot_partition = proof.var_partition(step.pivot)?;
+            // TODO Merge interpolants (three case split)
+            let resolvent_itp: CNF = match pivot_partition {
+                Partition::A => {
+                    // I_L OR I_R
+
+                    cnf_from_unit(BOTTOM.into())
+                },
+                Partition::B => {
+                    // I_L AND I_R
+
+                    cnf_from_unit(BOTTOM.into())
+                },
+                Partition::AB => {
+                    // (I_L OR x) AND (I_R OR ~x)
+
+                    cnf_from_unit(BOTTOM.into())
+                }
+            };
+
+            // TODO Optionally simplify resolvent interpolant
+
+
+            interpolants.insert(step.resolvent, resolvent_itp);
+        }
+
+        None
     }
 
     fn encode_and_gate(&mut self, gate: &AndGate, t: u32) -> Result<(), ModelCheckingError> {
