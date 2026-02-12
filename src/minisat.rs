@@ -9,7 +9,7 @@ use std::pin::Pin;
 #[cxx::bridge]
 pub mod ffi {
     // Shared structs, whose fields will be visible to both languages
-    #[derive(Debug, Copy, Clone)]
+    #[derive(Debug, Copy, Clone, PartialEq, Eq)]
     struct Literal {
         id: i32,
     }
@@ -151,7 +151,7 @@ impl Solver {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct Clause {
     lits: Box<[Literal]>,
 }
@@ -182,9 +182,25 @@ impl<'a> IntoIterator for &'a Clause {
 
 pub type CNF = Vec<Clause>;
 
-#[inline]
-pub fn cnf_from_unit(lit: Literal) -> CNF {
-    vec![Clause::new([lit])]
+impl PartialEq<Literal> for CNF {
+    fn eq(&self, lit: &Literal) -> bool {
+        self.len() == 1 && self[0].lits.len() == 1 && self[0].lits[0] == *lit
+    }
+}
+impl PartialEq<Literal> for &CNF {
+    fn eq(&self, lit: &Literal) -> bool {
+        self.len() == 1 && self[0].lits.len() == 1 && self[0].lits[0] == *lit
+    }
+}
+impl From<Literal> for CNF {
+    fn from(lit: Literal) -> Self {
+        vec![Clause::new([lit])]
+    }
+}
+impl From<Clause> for CNF {
+    fn from(clause: Clause) -> Self {
+        vec![clause]
+    }
 }
 
 

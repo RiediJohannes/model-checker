@@ -2,7 +2,7 @@ use std::collections::{HashMap};
 use thiserror::Error;
 use crate::bmc::aiger;
 use crate::bmc::aiger::{AndGate, Latch, ParseError, Signal, AIG};
-use crate::minisat::{Solver, Literal, Partition, CNF, cnf_from_unit};
+use crate::minisat::{Solver, Literal, Partition, CNF};
 
 
 #[derive(Error, Debug)]
@@ -185,43 +185,63 @@ impl BmcModel<'_> {
 
         // Base case: Annotate root clauses in partition A/B with Bottom/Top
         for A_clause_id in proof.clauses_in_partition(Partition::A) {
-            interpolants.insert(*A_clause_id, cnf_from_unit(Literal::from_var(BOTTOM)));
+            interpolants.insert(*A_clause_id, Literal::from_var(BOTTOM).into());
         }
 
         for B_clause_id in proof.clauses_in_partition(Partition::B) {
-            interpolants.insert(*B_clause_id, cnf_from_unit(Literal::from_var(TOP)));
+            interpolants.insert(*B_clause_id, Literal::from_var(TOP).into());
         }
+
+        let FALSE = Literal::from_var(BOTTOM);
+        let TRUE = Literal::from_var(TOP);
 
         // Inductive case: Compute new part. interpolant from previous part. interpolants
         for step in proof.resolutions() {
-            let left_itp = interpolants.get(&step.left).unwrap();
-            let right_itp = interpolants.get(&step.right).unwrap();
+            let I_L: &CNF = interpolants.get(&step.left).unwrap();
+            let I_R: &CNF = interpolants.get(&step.right).unwrap();
             assert!(!interpolants.contains_key(&step.resolvent));
 
             let pivot_partition = proof.var_partition(step.pivot)?;
             // TODO Merge interpolants (three case split)
-            let resolvent_itp: CNF = match pivot_partition {
+            let I_resolvent: CNF = match pivot_partition {
                 Partition::A => {
                     // I_L OR I_R
-
-                    cnf_from_unit(BOTTOM.into())
+                    if I_L == TRUE || I_R == TRUE {
+                        CNF::from(TRUE)
+                    } else if I_L == FALSE {
+                        (*I_R).clone()
+                    } else if I_R == FALSE {
+                        (*I_L).clone()
+                    }  else {
+                        // TODO Tseitin OR gate transformation
+                        CNF::from(FALSE)
+                    }
                 },
                 Partition::B => {
                     // I_L AND I_R
-
-                    cnf_from_unit(BOTTOM.into())
+                    if I_L == FALSE || I_R == FALSE {
+                        CNF::from(FALSE)
+                    } else if I_L == TRUE {
+                        (*I_R).clone()
+                    } else if I_R == TRUE {
+                        (*I_L).clone()
+                    }  else {
+                        // TODO Tseitin AND gate transformation
+                        CNF::from(FALSE)
+                    }
                 },
                 Partition::AB => {
                     // (I_L OR x) AND (I_R OR ~x)
+                    // TODO 2x Tseitin OR, then Tseitin AND
 
-                    cnf_from_unit(BOTTOM.into())
+                    CNF::from(FALSE)
                 }
             };
 
             // TODO Optionally simplify resolvent interpolant
 
 
-            interpolants.insert(step.resolvent, resolvent_itp);
+            interpolants.insert(step.resolvent, I_resolvent);
         }
 
         None
