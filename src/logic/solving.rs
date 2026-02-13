@@ -5,9 +5,21 @@ use crate::logic::types::{Clause, CNF, XCNF};
 
 use cxx::{CxxVector, UniquePtr};
 use ffi::SolverStub;
+use lazy_static::lazy_static;
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::Neg;
 use std::pin::Pin;
+
+
+// Fixed IDs to use for SAT variables representing boolean constants
+pub const BOTTOM: i32 = 0;
+pub const TOP: i32 = BOTTOM + 1;
+pub const VAR_OFFSET: usize = 1;
+
+lazy_static! {
+    pub static ref TRUE: Literal = Literal::raw(TOP);
+    pub static ref FALSE: Literal = Literal::raw(BOTTOM);
+}
 
 
 #[cxx::bridge]
@@ -99,10 +111,20 @@ impl Solver {
     pub fn new() -> Self {
         let mut resolution = Box::new(ResolutionProof::new());
 
-        Self {
+        let mut solver = Self {
             stub: ffi::newSolver(&mut resolution),
             resolution: Some(resolution),
-        }
+        };
+
+        // Add the constant false literal to the solver
+        solver.clear_partition();
+
+        let bottom = solver.add_var();
+        assert_eq!(bottom.var(), BOTTOM);
+
+        solver.add_clause([-bottom]);
+
+        solver
     }
 
     pub fn add_var(&mut self) -> Literal {
@@ -145,7 +167,17 @@ impl Solver {
         self.remote().getModel()
     }
 
+    #[allow(non_snake_case)]
     pub fn tseitin_or(&mut self, left: &XCNF, right: &XCNF) -> XCNF {
+        // Detect trivial cases
+        if left == *TRUE || right == *TRUE {
+            return XCNF::from(*TRUE);
+        } else if left == *FALSE {
+            return (*right).clone();
+        } else if right == *FALSE {
+            return (*left).clone();
+        }
+
         let tseitin_lit: Literal = self.add_var();
         let tseitin_clauses: CNF = {
             let c1 = &Clause::new([-left.out_lit, tseitin_lit]);
@@ -159,6 +191,15 @@ impl Solver {
     }
 
     pub fn tseitin_and(&mut self, left: &XCNF, right: &XCNF) -> XCNF {
+        // Detect trivial cases
+        if left == *FALSE || right == *FALSE {
+            return XCNF::from(*FALSE);
+        } else if left == *TRUE {
+            return (*right).clone();
+        } else if right == *TRUE {
+            return (*left).clone();
+        }
+
         let tseitin_lit: Literal = self.add_var();
         let tseitin_clauses: CNF = {
             let c1 = &Clause::new([-tseitin_lit, left.out_lit]);

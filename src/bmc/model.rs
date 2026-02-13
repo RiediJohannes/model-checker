@@ -2,7 +2,7 @@ use crate::bmc::aiger;
 use crate::bmc::aiger::{AndGate, Latch, ParseError, Signal, AIG};
 use crate::logic::resolution::Partition;
 use crate::logic::solving::Solver;
-use crate::logic::{Clause, Literal, XCNF};
+use crate::logic::{Clause, Literal, XCNF, VAR_OFFSET, FALSE, TRUE};
 
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -20,11 +20,6 @@ pub enum Conclusion {
     Ok,
     Fail,
 }
-
-// Fixed IDs to use for SAT variables representing boolean constants
-const BOTTOM: i32 = 0;
-const TOP: i32 = BOTTOM + 1;
-const VAR_OFFSET: usize = 1;
 
 
 pub fn load_model(name: &str) -> Result<AIG, ParseError> {
@@ -75,19 +70,10 @@ pub struct BmcModel<'a> {
 
 impl BmcModel<'_> {
     pub fn from_aig(graph: &'_ AIG) -> Result<BmcModel<'_>, ModelCheckingError> {
-        // Add the constant false literal to the solver
-        let mut solver = Solver::new();
-        solver.clear_partition();
-
-        let bottom = solver.add_var();
-        assert_eq!(bottom.var(), BOTTOM);
-
-        solver.add_clause([-bottom]);
-
         let mut model = BmcModel {
             graph,
             time_steps: Vec::new(),
-            solver
+            solver: Solver::new()
         };
 
         model.solver.set_partition(Partition::A);
@@ -119,8 +105,8 @@ impl BmcModel<'_> {
     fn signal_at_time(&mut self, signal: &Signal, time: u32) -> Result<Literal, ModelCheckingError> {
         match signal {
             // For the constant signals, always return the same fixed literal (irrespective of the time step)
-            Signal::Constant(true) => Ok(Literal::raw(TOP)),
-            Signal::Constant(false) => Ok(Literal::raw(BOTTOM)),
+            Signal::Constant(true) => Ok(*TRUE),
+            Signal::Constant(false) => Ok(*FALSE),
             Signal::Var(aig_var) => {
                 if let Some(step_vars) = self.time_steps.get_mut(time as usize) {
                     let lit = *step_vars.entry(aig_var.idx()).or_insert_with(||self.solver.add_var());
@@ -187,16 +173,13 @@ impl BmcModel<'_> {
         let proof_box = self.solver.resolution.take()?;
         let proof = proof_box.deref();
 
-        let FALSE = Literal::raw(BOTTOM);
-        let TRUE = Literal::raw(TOP);
-
         // Base case: Annotate root clauses in partition A/B with Bottom/Top
         for A_clause_id in proof.clauses_in_partition(Partition::A) {
-            interpolants.insert(*A_clause_id, FALSE.into());
+            interpolants.insert(*A_clause_id, (*FALSE).into());
         }
 
         for B_clause_id in proof.clauses_in_partition(Partition::B) {
-            interpolants.insert(*B_clause_id, TRUE.into());
+            interpolants.insert(*B_clause_id, (*TRUE).into());
         }
 
         // Inductive case: Compute new part. interpolant from previous part. interpolants
@@ -210,30 +193,13 @@ impl BmcModel<'_> {
             let I_resolvent: XCNF = match pivot_partition {
                 Partition::A => {
                     // I_L OR I_R
-                    if I_L == TRUE || I_R == TRUE {
-                        XCNF::from(TRUE)
-                    } else if I_L == FALSE {
-                        (*I_R).clone()
-                    } else if I_R == FALSE {
-                        (*I_L).clone()
-                    }  else {
-                        self.solver.tseitin_or(I_L, I_R)
-                    }
+                    self.solver.tseitin_or(I_L, I_R)
                 },
                 Partition::B => {
                     // I_L AND I_R
-                    if I_L == FALSE || I_R == FALSE {
-                        XCNF::from(FALSE)
-                    } else if I_L == TRUE {
-                        (*I_R).clone()
-                    } else if I_R == TRUE {
-                        (*I_L).clone()
-                    }  else {
-                        self.solver.tseitin_and(I_L, I_R)
-                    }
+                    self.solver.tseitin_and(I_L, I_R)
                 },
                 Partition::AB => {
-                    // TODO: Move the case split logic with TRUE/FALSE simplifications to tseitin-OR/AND!
                     // (I_L OR x) AND (I_R OR ~x)
                     let left_conjunct = self.solver.tseitin_or(I_L, &XCNF::from(step.pivot));
                     let right_conjunct = self.solver.tseitin_or(I_R, &XCNF::from(step.pivot));
