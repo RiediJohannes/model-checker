@@ -79,8 +79,7 @@ impl From<i32> for Literal {
 /// methods for logic formula transformations.
 pub struct Solver {
     stub: UniquePtr<SolverStub>,
-    resolution: Box<ResolutionProof>,  // IMPORTANT to box this member, otherwise passing its reference to C++ will lead to memory-issues!
-    solved: bool,
+    pub resolution: Option<Box<ResolutionProof>>,  // IMPORTANT to box this member, otherwise passing its reference to C++ will lead to memory-issues!
 }
 
 impl Solver {
@@ -89,8 +88,7 @@ impl Solver {
 
         Self {
             stub: ffi::newSolver(&mut resolution),
-            resolution,
-            solved: false,
+            resolution: Some(resolution),
         }
     }
 
@@ -109,40 +107,29 @@ impl Solver {
     }
 
     pub fn set_partition(&mut self, partition: Partition) {
-        self.resolution.partition = Some(partition);
+        if let Some(proof) = self.resolution.as_mut() {
+            proof.partition = Some(partition);
+        }
     }
 
     pub fn clear_partition(&mut self) {
-        self.resolution.partition = None;
+        if let Some(proof) = self.resolution.as_mut() {
+            proof.partition = None;
+        }
     }
 
     pub fn solve(&mut self) -> bool {
-        self.solved = false;
-        let is_sat =self.remote().solve();
-        self.solved = true;
-
-        is_sat
+        self.remote().solve()
     }
 
     pub fn solve_assuming<L>(&mut self, assumptions: L) -> bool
     where L: AsRef<[Literal]> {
-        self.solved = false;
-        let is_sat = self.remote().solve_with_assumptions(assumptions.as_ref());
-        self.solved = true;
-
-        is_sat
+        self.remote().solve_with_assumptions(assumptions.as_ref())
     }
 
     pub fn get_model(&mut self) -> UniquePtr<CxxVector<i8>>
     {
         self.remote().getModel()
-    }
-
-    pub fn get_proof(&self) -> Option<&ResolutionProof> {
-        match self.solved {
-            true => Some(self.resolution.as_ref()),
-            false => None
-        }
     }
 
     pub fn tseitin_or(&mut self, left: &XCNF, right: &XCNF) -> XCNF {

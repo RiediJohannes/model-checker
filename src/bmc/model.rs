@@ -1,4 +1,5 @@
 use std::collections::{HashMap};
+use std::ops::Deref;
 use thiserror::Error;
 use crate::bmc::aiger;
 use crate::bmc::aiger::{AndGate, Latch, ParseError, Signal, AIG};
@@ -181,7 +182,9 @@ impl BmcModel<'_> {
     #[allow(non_snake_case)]
     pub fn compute_interpolant(&mut self) -> Option<XCNF> {
         let mut interpolants: HashMap<i32, XCNF> = HashMap::new();
-        let proof = self.solver.get_proof()?;
+        // Temporarily take ownership of the resolution proof to allow for mutable references to solver during this function
+        let proof_box = self.solver.resolution.take()?;
+        let proof = proof_box.deref();
 
         // Base case: Annotate root clauses in partition A/B with Bottom/Top
         for A_clause_id in proof.clauses_in_partition(Partition::A) {
@@ -202,7 +205,6 @@ impl BmcModel<'_> {
             assert!(!interpolants.contains_key(&step.resolvent));
 
             let pivot_partition = proof.var_partition(step.pivot)?;
-            // TODO Merge interpolants (three case split)
             let I_resolvent: XCNF = match pivot_partition {
                 Partition::A => {
                     // I_L OR I_R
@@ -231,7 +233,7 @@ impl BmcModel<'_> {
                 Partition::AB => {
                     // (I_L OR x) AND (I_R OR ~x)
                     let left_conjunct = self.solver.tseitin_or(I_L, &XCNF::from(step.pivot));
-                    let right_conjunct = self.solver.tseitin_or(I_L, &XCNF::from(step.pivot));
+                    let right_conjunct = self.solver.tseitin_or(I_R, &XCNF::from(step.pivot));
 
                     self.solver.tseitin_and(&left_conjunct, &right_conjunct)
                 }
@@ -239,9 +241,10 @@ impl BmcModel<'_> {
 
             // TODO Optionally simplify resolvent interpolant
 
-
             interpolants.insert(step.resolvent, I_resolvent);
         }
+
+        self.solver.resolution = Some(proof_box);   // return proof ownership
 
         None
     }
