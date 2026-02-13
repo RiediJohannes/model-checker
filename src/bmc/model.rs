@@ -3,7 +3,7 @@ use std::ops::Deref;
 use thiserror::Error;
 use crate::bmc::aiger;
 use crate::bmc::aiger::{AndGate, Latch, ParseError, Signal, AIG};
-use crate::minisat::{Solver, Literal, Partition, XCNF};
+use crate::minisat::{Solver, Literal, Partition, XCNF, Clause};
 
 
 #[derive(Error, Debug)]
@@ -20,7 +20,8 @@ pub enum Conclusion {
 
 // Fixed IDs to use for SAT variables representing boolean constants
 const BOTTOM: i32 = 0;
-const TOP: i32 = 1;
+const TOP: i32 = BOTTOM + 1;
+const VAR_OFFSET: usize = 1;
 
 
 pub fn load_model(name: &str) -> Result<AIG, ParseError> {
@@ -53,11 +54,14 @@ pub fn check_interpolated(graph: &AIG, initial_k: u32) -> Result<Conclusion,Mode
     let mut bmc = BmcModel::from_aig(graph)?;
     bmc.unwind(initial_k)?;
 
-    if bmc.check() == Conclusion::Ok {
-        return Ok(Conclusion::Ok);
-    }
+    // if bmc.check() == Conclusion::Ok {
+    //     return Ok(Conclusion::Ok);
+    // }
 
-    let _interpolant = bmc.compute_interpolant();
+    bmc.check();
+
+    let interpolant = bmc.compute_interpolant();
+    dbg!(interpolant);
 
     Ok(Conclusion::Ok)
 }
@@ -70,17 +74,14 @@ pub struct BmcModel<'a> {
 
 impl BmcModel<'_> {
     pub fn from_aig(graph: &'_ AIG) -> Result<BmcModel<'_>, ModelCheckingError> {
-        // Add the constant zero and constant one literal to the solver
+        // Add the constant false literal to the solver
         let mut solver = Solver::new();
         solver.clear_partition();
 
         let bottom = solver.add_var();
-        let top = solver.add_var();
         assert_eq!(bottom.var(), BOTTOM);
-        assert_eq!(top.var(), TOP);
 
         solver.add_clause([-bottom]);
-        solver.add_clause([top]);
 
         let mut model = BmcModel {
             graph,
@@ -117,8 +118,8 @@ impl BmcModel<'_> {
     fn signal_at_time(&mut self, signal: &Signal, time: u32) -> Result<Literal, ModelCheckingError> {
         match signal {
             // For the constant signals, always return the same fixed literal (irrespective of the time step)
-            Signal::Constant(true) => Ok(Literal::from_var(TOP)),
-            Signal::Constant(false) => Ok(Literal::from_var(BOTTOM)),
+            Signal::Constant(true) => Ok(Literal::raw(TOP)),
+            Signal::Constant(false) => Ok(Literal::raw(BOTTOM)),
             Signal::Var(aig_var) => {
                 if let Some(step_vars) = self.time_steps.get_mut(time as usize) {
                     let lit = *step_vars.entry(aig_var.idx()).or_insert_with(||self.solver.add_var());
@@ -149,7 +150,6 @@ impl BmcModel<'_> {
             for gate in self.graph.and_gates.iter() {
                 self.encode_and_gate(gate, t)?;
             }
-
             // Latches
             for latch in self.graph.latches.iter() {
                 self.encode_latch(latch, t)?;
@@ -186,19 +186,20 @@ impl BmcModel<'_> {
         let proof_box = self.solver.resolution.take()?;
         let proof = proof_box.deref();
 
+        let FALSE = Literal::raw(BOTTOM);
+        let TRUE = Literal::raw(TOP);
+
         // Base case: Annotate root clauses in partition A/B with Bottom/Top
         for A_clause_id in proof.clauses_in_partition(Partition::A) {
-            interpolants.insert(*A_clause_id, Literal::from_var(BOTTOM).into());
+            interpolants.insert(*A_clause_id, FALSE.into());
         }
 
         for B_clause_id in proof.clauses_in_partition(Partition::B) {
-            interpolants.insert(*B_clause_id, Literal::from_var(TOP).into());
+            interpolants.insert(*B_clause_id, TRUE.into());
         }
 
-        let FALSE = Literal::from_var(BOTTOM);
-        let TRUE = Literal::from_var(TOP);
-
         // Inductive case: Compute new part. interpolant from previous part. interpolants
+        let mut last = 0;
         for step in proof.resolutions() {
             let I_L: &XCNF = interpolants.get(&step.left).unwrap();
             let I_R: &XCNF = interpolants.get(&step.right).unwrap();
@@ -231,6 +232,7 @@ impl BmcModel<'_> {
                     }
                 },
                 Partition::AB => {
+                    // TODO: Move the case split logic with TRUE/FALSE simplifications to tseitin-OR/AND!
                     // (I_L OR x) AND (I_R OR ~x)
                     let left_conjunct = self.solver.tseitin_or(I_L, &XCNF::from(step.pivot));
                     let right_conjunct = self.solver.tseitin_or(I_R, &XCNF::from(step.pivot));
@@ -239,14 +241,28 @@ impl BmcModel<'_> {
                 }
             };
 
+            println!(
+                "I_L: {:?},\n\
+                I_R: {:?},\n\
+                -- Resolving on literal {:?} (partition: {:?})\n\
+                => {:?}\n",
+                &I_L, &I_R, &step.pivot, &pivot_partition, &I_resolvent
+            );
+
             // TODO Optionally simplify resolvent interpolant
 
             interpolants.insert(step.resolvent, I_resolvent);
+            last = step.resolvent;
         }
+
+        let last_clause = proof.get_clause(last)?;
+        assert_eq!(last_clause, &Clause::from_vec(vec![]));  // the last clause must be empty
 
         self.solver.resolution = Some(proof_box);   // return proof ownership
 
-        None
+        let final_interpolant = interpolants.remove(&last)?;
+        // let final_interpolant = interpolants.get(&last)?.clone();
+        Some(final_interpolant)
     }
 
     fn encode_and_gate(&mut self, gate: &AndGate, t: u32) -> Result<(), ModelCheckingError> {
@@ -278,15 +294,15 @@ fn print_sat_model(graph: &AIG, model: &[i8]) {
     let num_a = graph.and_gates.len();
     let frame_size = num_i + num_l + num_a;
 
-    println!("--- SAT Model Assignment (True Variables) ---");
+    println!("#--- SAT Model Assignment (True Variables) ---");
 
-    for (idx, &val) in model.iter().enumerate().skip(2) {
+    for (idx, &val) in model.iter().enumerate().skip(VAR_OFFSET) {
         // Only print variables that were set to true
         if val != 1 {
             continue;
         }
 
-        let normalized = idx - 2;
+        let normalized = idx - VAR_OFFSET;
         let t = normalized / frame_size; // Time step
         let f = normalized % frame_size; // Offset in frame
 
@@ -307,8 +323,8 @@ fn print_sat_model(graph: &AIG, model: &[i8]) {
 fn print_input_trace(graph: &AIG, model: &[i8]) {
     let num_i = graph.inputs.len();
 
-    // The first two variables are constants (top/bottom)
-    let total_vars = model.len().saturating_sub(2);
+    // The first variable is the constant bottom
+    let total_vars = model.len().saturating_sub(1);
     let vars_per_frame = graph.variables().count();
     let num_steps = total_vars / vars_per_frame;
 
@@ -324,7 +340,7 @@ fn print_input_trace(graph: &AIG, model: &[i8]) {
         print!("{:>4} | ", k);
         for i in 0..num_i {
             // Use frame_size derived from variables().len()
-            let idx = 2 + (k * vars_per_frame) + i;
+            let idx = VAR_OFFSET + (k * vars_per_frame) + i;
             if let Some(&val) = model.get(idx) {
                 let display = match val {
                     1  => " T  ", // True

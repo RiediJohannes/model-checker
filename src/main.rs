@@ -22,7 +22,7 @@ fn main() {
     let mut args = Args::parse();
 
     let aiger_file = "data/count10.aag";  // args.file_path
-    let k: u32 = 6; // args.k
+    let k: u32 = 3; // args.k
     args.interpolate = true;
 
     let instance = bmc::load_model(aiger_file).unwrap_or_else(|e| {

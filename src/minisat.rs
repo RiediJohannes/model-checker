@@ -2,14 +2,14 @@ use cxx::{CxxVector, UniquePtr};
 pub use ffi::Literal;
 use ffi::SolverStub;
 use std::collections::{HashMap, HashSet};
-use std::fmt::Display;
+use std::fmt::{Debug, Display, Formatter};
 use std::ops::{BitAnd, Index, Neg};
 use std::pin::Pin;
 
 #[cxx::bridge]
 pub mod ffi {
     // Shared structs, whose fields will be visible to both languages
-    #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+    #[derive(Copy, Clone, PartialEq, Eq)]
     struct Literal {
         id: i32,
     }
@@ -43,6 +43,9 @@ impl Literal {
     pub fn from_var(var: i32) -> Self {
         Self { id: var << 1 }
     }
+    pub fn raw(lit_id: i32) -> Self {
+        Self { id: lit_id }
+    }
 
     pub fn var(&self) -> i32 {
         self.id >> 1
@@ -54,20 +57,26 @@ impl Literal {
         Literal { id: self.id & !1 }
     }
 }
-
 impl Neg for Literal {
     type Output = Self;
     fn neg(self) -> Self::Output {
         Literal { id: self.id ^ 1 }
     }
 }
-
-impl Display for Literal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}{}", if self.is_pos() { "" } else { "-" }, self.var())
+impl Debug for Literal {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Literal: {}", self.id)
     }
 }
-
+impl Display for Literal {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self.id {
+            0 => write!(f, "⊥"),
+            1 => write!(f, "⊤"),
+            _ => write!(f, "{}{}", if self.is_pos() { "" } else { "-" }, self.var()),
+        }
+    }
+}
 impl From<i32> for Literal {
     fn from(i: i32) -> Self {
         Literal { id: i }
@@ -165,7 +174,7 @@ impl Solver {
 }
 
 
-#[derive(Debug,Clone)]
+#[derive(Clone,PartialEq,Eq)]
 pub struct Clause {
     lits: Box<[Literal]>,
 }
@@ -184,7 +193,26 @@ impl Clause {
         Self { lits: v.into_boxed_slice() }
     }
 }
-
+impl Debug for Clause {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Clause: [{}]",
+               self.lits.iter()
+                   .map(|l| format!("{}", l))
+                   .collect::<Vec<_>>()
+                   .join(", ")
+        )
+    }
+}
+impl Display for Clause {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}]",
+               self.lits.iter()
+                   .map(|l| format!("{}", l))
+                   .collect::<Vec<_>>()
+                   .join(", ")
+        )
+    }
+}
 impl<'a> IntoIterator for &'a Clause {
     type Item = Literal;
     type IntoIter = std::iter::Copied<std::slice::Iter<'a, Literal>>;
@@ -202,7 +230,7 @@ impl BitAnd<&Clause> for &Clause {
 }
 
 
-#[derive(Debug,Clone)]
+#[derive(Clone)]
 pub struct CNF {
     pub clauses: Vec<Clause>,
 }
@@ -238,6 +266,16 @@ impl From<Literal> for CNF {
 impl From<Clause> for CNF {
     fn from(clause: Clause) -> Self {
         CNF::from(vec![clause])
+    }
+}
+impl Debug for CNF {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CNF: {{ {} }}",
+            self.clauses.iter()
+                .map(|c| format!("{}", c))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     }
 }
 impl BitAnd<&Clause> for CNF {
@@ -311,6 +349,7 @@ pub enum Partition {
 }
 
 
+#[derive(Debug)]
 pub struct ResolutionStep {
     pub left: i32,
     pub right: i32,
