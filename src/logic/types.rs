@@ -1,3 +1,5 @@
+#![allow(clippy::upper_case_acronyms)]
+
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::{BitAnd, Index};
 use super::solving::Literal;
@@ -22,7 +24,7 @@ impl Clause {
     }
 }
 impl Debug for Clause {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "Clause: [{}]",
                self.lits.iter()
                    .map(|l| format!("{}", l))
@@ -106,6 +108,7 @@ impl Debug for CNF {
         )
     }
 }
+#[allow(clippy::suspicious_arithmetic_impl)]
 impl BitAnd<&Clause> for CNF {
     type Output = CNF;
     fn bitand(self, rhs: &Clause) -> Self::Output {
@@ -115,6 +118,7 @@ impl BitAnd<&Clause> for CNF {
         CNF::from(merged_vec)
     }
 }
+#[allow(clippy::suspicious_arithmetic_impl)]
 impl BitAnd<&CNF> for CNF {
     type Output = CNF;
     fn bitand(self, rhs: &CNF) -> Self::Output {

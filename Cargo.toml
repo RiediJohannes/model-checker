@@ -18,4 +18,3 @@ thiserror = "2.0.18"
 cxx-build = "1.0"
 
 [lints.clippy]
-non_camel_case_types = "allow"
