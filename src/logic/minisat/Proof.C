@@ -237,7 +237,7 @@ void Proof::traverse(ProofTraverser& trav, ClauseId goal)
 
 //============ Custom Proof Traverser ================
 #include "Sort.h"
-#include "model-checker/src/minisat.rs.h"  // import shared types
+#include "model-checker/src/logic/solving.rs.h"  // import shared types
 
 
 /// Converts a clause c to a Rust slice of i32

@@ -1,9 +1,12 @@
-use std::collections::{HashMap};
-use std::ops::Deref;
-use thiserror::Error;
 use crate::bmc::aiger;
 use crate::bmc::aiger::{AndGate, Latch, ParseError, Signal, AIG};
-use crate::minisat::{Solver, Literal, Partition, XCNF, Clause};
+use crate::logic::resolution::Partition;
+use crate::logic::solving::Solver;
+use crate::logic::{Clause, Literal, XCNF};
+
+use std::collections::HashMap;
+use std::ops::Deref;
+use thiserror::Error;
 
 
 #[derive(Error, Debug)]
@@ -54,16 +57,14 @@ pub fn check_interpolated(graph: &AIG, initial_k: u32) -> Result<Conclusion,Mode
     let mut bmc = BmcModel::from_aig(graph)?;
     bmc.unwind(initial_k)?;
 
-    // if bmc.check() == Conclusion::Ok {
-    //     return Ok(Conclusion::Ok);
-    // }
+    if bmc.check() == Conclusion::Ok {
+        let interpolant = bmc.compute_interpolant();
+        dbg!(interpolant);
 
-    bmc.check();
+        return Ok(Conclusion::Ok);
+    }
 
-    let interpolant = bmc.compute_interpolant();
-    dbg!(interpolant);
-
-    Ok(Conclusion::Ok)
+    Ok(Conclusion::Fail)
 }
 
 pub struct BmcModel<'a> {

@@ -6,11 +6,11 @@ fn main() {
     let path = Path::new("./src").canonicalize().expect("Failed to resolve 'src' directory");
     CFG.exported_header_dirs.extend(vec![path.as_path()]);
 
-    cxx_build::bridge("src/minisat.rs")
-        .file("src/minisat/File.C")
-        .file("src/minisat/Proof.C")
-        .file("src/minisat/Solver.C")
-        .file("src/minisat/Api.C")
+    cxx_build::bridge("src/logic/solving.rs")
+        .file("src/logic/minisat/File.C")
+        .file("src/logic/minisat/Proof.C")
+        .file("src/logic/minisat/Solver.C")
+        .file("src/logic/minisat/Stub.C")
         .std("gnu++11")  // max-version for minisat 1.14 AND min-version for CXX bridge
         // .flag("-O3")
         .flag("-ffloat-store")
@@ -23,9 +23,9 @@ fn main() {
     // println!("cargo:rustc-link-search=native=clib");
     // println!("cargo:rustc-link-clib=static=minisat");
 
-    println!("cargo:rerun-if-changed=src/minisat/Solver.C");
-    println!("cargo:rerun-if-changed=src/minisat/Proof.C");
-    println!("cargo:rerun-if-changed=src/minisat/Api.C");
+    println!("cargo:rerun-if-changed=src/logic/minisat/Solver.C");
+    println!("cargo:rerun-if-changed=src/logic/minisat/Proof.C");
+    println!("cargo:rerun-if-changed=src/logic/minisat/Stub.C");
 
     // Compile manually
     // g++ -ffloat-store -std=gnu++11 -O3 File.C Main.C Proof.C Solver.C -lz -o minisat

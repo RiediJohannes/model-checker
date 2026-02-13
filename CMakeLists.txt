@@ -7,20 +7,20 @@ include_directories(src/minisat)
 include_directories(target/cxxbridge)
 
 add_executable(model_checker
-        src/minisat/File.C
-        src/minisat/File.h
-        src/minisat/Global.h
-        src/minisat/Heap.h
-        src/minisat/Main.C
-        src/minisat/Proof.C
-        src/minisat/Proof.h
-        src/minisat/Solver.C
-        src/minisat/Solver.h
-        src/minisat/SolverTypes.h
-        src/minisat/Sort.h
-        src/minisat/VarOrder.h
-        src/minisat/Api.C
-        src/minisat/Api.h)
+        src/logic/minisat/File.C
+        src/logic/minisat/File.h
+        src/logic/minisat/Global.h
+        src/logic/minisat/Heap.h
+        src/logic/minisat/Main.C
+        src/logic/minisat/Proof.C
+        src/logic/minisat/Proof.h
+        src/logic/minisat/Solver.C
+        src/logic/minisat/Solver.h
+        src/logic/minisat/SolverTypes.h
+        src/logic/minisat/Sort.h
+        src/logic/minisat/VarOrder.h
+        src/logic/minisat/Stub.C
+        src/logic/minisat/Stub.h)
 
 add_compile_options(-Wno-deprecated)
 

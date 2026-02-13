@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-mod minisat;
+mod logic;
 mod bmc;
 
 use std::process;

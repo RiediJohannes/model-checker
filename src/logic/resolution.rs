@@ -1,0 +1,144 @@
+use super::Literal;
+use crate::logic::types::Clause;
+use std::collections::{HashMap, HashSet};
+
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum Partition {
+    A,
+    B,
+    AB
+}
+
+#[derive(Debug)]
+pub struct ResolutionStep {
+    pub left: i32,
+    pub right: i32,
+    pub pivot: Literal,
+    pub resolvent: i32,
+}
+impl ResolutionStep {
+    pub fn new<L>(left: i32, right: i32, pivot: L, resolvent_id: i32) -> Self
+    where L: Into<Literal>
+    {
+        Self {
+            left,
+            right,
+            pivot: pivot.into(),
+            resolvent: resolvent_id
+        }
+    }
+}
+
+pub struct ResolutionProof {
+    root_clauses: Vec<Clause>,
+    intermediate_clauses: Vec<Clause>,
+    resolution_steps: Vec<ResolutionStep>,
+
+    clauses_per_partition: HashMap<Partition, HashSet<i32>>,
+    vars_per_partition: HashMap<Partition, HashSet<i32>>,
+    pub partition: Option<Partition>,
+}
+
+impl ResolutionProof {
+    pub fn new() -> Self {
+        let mut clauses_dict = HashMap::new();
+        let mut vars_dict = HashMap::new();
+        for p in [Partition::A, Partition::B] {
+            clauses_dict.insert(p, HashSet::new());
+            vars_dict.insert(p, HashSet::new());
+        }
+
+        Self {
+            root_clauses: Vec::new(),
+            intermediate_clauses: Vec::new(),
+            resolution_steps: Vec::new(),
+
+            clauses_per_partition: clauses_dict,
+            vars_per_partition: vars_dict,
+            partition: None,
+        }
+    }
+
+    pub fn get_clause(&self, clause_id: i32) -> Option<&Clause> {
+        if clause_id >= 0 {
+            self.root_clauses.get(clause_id as usize)
+        } else {
+            self.intermediate_clauses.get((-clause_id) as usize)
+        }
+    }
+
+    pub fn clauses_in_partition(&self, partition: Partition) -> impl Iterator<Item = &i32> {
+        self.clauses_per_partition
+            .get(&partition)
+            .into_iter()    // Option -> Iterator (0 or 1 item)
+            .flat_map(|ids| ids.iter())
+        // Optionally query the clause also
+        // .filter_map(move |&id| {
+        //     self.get_clause(id).map(|clause| (id, clause))
+        // })
+    }
+
+    pub fn var_partition(&self, lit: Literal) -> Option<Partition> {
+        let var = lit.var();
+        let in_a = self.vars_per_partition[&Partition::A].contains(&var);
+        let in_b = self.vars_per_partition[&Partition::B].contains(&var);
+
+        if in_a && in_b {
+            return Some(Partition::AB);
+        } else if in_a {
+            return Some(Partition::A);
+        } else if in_b {
+            return Some(Partition::B);
+        }
+
+        None
+    }
+
+    pub fn resolutions(&self) -> impl Iterator<Item = &ResolutionStep> {
+        self.resolution_steps.iter()
+    }
+
+    pub fn notify_clause(&mut self, id: u32, lits: &[i32]) {
+        let clause = Clause::new(
+            lits.iter().map(|&lit| Literal::from(lit))
+        );
+
+        if let Some(partition) = self.partition {
+            self.clauses_per_partition.entry(partition).or_default().insert(id as i32);
+            for lit in &clause {
+                self.vars_per_partition.entry(partition).or_default().insert(lit.var());
+            }
+        }
+
+        self.root_clauses.push(clause);
+        assert_eq!(id as usize, self.root_clauses.len() - 1);
+    }
+
+    pub fn notify_resolution(self: &mut ResolutionProof, resolvent_id: i32, left: i32, right: i32, pivot: i32, resolvent: &[i32]) {
+        let resolved_clause = Clause::new(
+            resolvent.iter().map(|&lit| Literal::from(lit))
+        );
+
+        self.resolution_steps.push(ResolutionStep::new(left, right, pivot, resolvent_id));
+
+        if resolvent_id >= 0 {
+            self.root_clauses.push(resolved_clause);
+            assert_eq!(resolvent_id as usize, self.root_clauses.len() - 1);
+        } else {
+            self.intermediate_clauses.push(resolved_clause);
+            assert_eq!((-resolvent_id) as usize, self.intermediate_clauses.len());
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.root_clauses.clear();
+        self.intermediate_clauses.clear();
+        self.resolution_steps.clear();
+
+        for p in [Partition::A, Partition::B] {
+            self.clauses_per_partition.entry(p).or_default().clear();
+            self.vars_per_partition.entry(p).or_default().clear();
+        }
+    }
+}
