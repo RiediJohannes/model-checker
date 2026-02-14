@@ -25,7 +25,7 @@ lazy_static! {
 #[cxx::bridge]
 pub mod ffi {
     // Shared structs, whose fields will be visible to both languages
-    #[derive(Copy, Clone, PartialEq, Eq)]
+    #[derive(Copy, Clone, Hash, PartialEq, Eq)]
     struct Literal {
         id: i32,
     }
@@ -51,7 +51,7 @@ pub mod ffi {
     extern "Rust" {
         type ResolutionProof;
         fn notify_clause(self: &mut ResolutionProof, id: u32, lits: &[i32]);
-        fn notify_resolution(self: &mut ResolutionProof, resolution_id: i32, left: i32, right: i32, pivot: i32, resolvent: &[i32]);
+        fn notify_resolution(self: &mut ResolutionProof, resolution_id: i32, left: i32, right: i32, pivot_var: i32, resolvent: &[i32]);
     }
 }
 

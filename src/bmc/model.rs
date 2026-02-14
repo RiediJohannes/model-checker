@@ -201,8 +201,9 @@ impl BmcModel<'_> {
                 },
                 Partition::AB => {
                     // (I_L OR x) AND (I_R OR ~x)
-                    let left_conjunct = self.solver.tseitin_or(I_L, &XCNF::from(step.pivot));
-                    let right_conjunct = self.solver.tseitin_or(I_R, &XCNF::from(step.pivot));
+                    let x = step.pivot;
+                    let left_conjunct = self.solver.tseitin_or(I_L, &XCNF::from(x));
+                    let right_conjunct = self.solver.tseitin_or(I_R, &XCNF::from(-x));
 
                     self.solver.tseitin_and(&left_conjunct, &right_conjunct)
                 }
@@ -215,8 +216,6 @@ impl BmcModel<'_> {
                 => {:?}\n",
                 &I_L, &I_R, &step.pivot, &pivot_partition, &I_resolvent
             );
-
-            // TODO Optionally simplify resolvent interpolant
 
             interpolants.insert(step.resolvent, I_resolvent);
             last = step.resolvent;

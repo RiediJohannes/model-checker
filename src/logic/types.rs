@@ -145,7 +145,7 @@ impl BitAnd<&CNF> for &CNF {
 
 /// Short for Extended CNF.</br>
 /// Extends a formula in CNF by an output tseitin literal that is true iff the formula is satisfiable.
-#[derive(Debug,Clone)]
+#[derive(Clone)]
 pub struct XCNF {
     pub clauses: CNF,
     pub out_lit: Literal
@@ -169,5 +169,10 @@ impl PartialEq<Literal> for &XCNF {
 impl From<Literal> for XCNF {
     fn from(lit: Literal) -> Self {
         Self::new(vec![Clause::new([lit])].into(), lit)
+    }
+}
+impl Debug for XCNF {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "XCNF {{ clauses: {{ {:?} }}, out_lit: {} }}", self.clauses, self.out_lit)
     }
 }

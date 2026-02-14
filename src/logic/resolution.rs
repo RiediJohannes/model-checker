@@ -24,7 +24,7 @@ impl ResolutionStep {
         Self {
             left,
             right,
-            pivot: pivot.into(),
+            pivot: pivot.into().unsign(),
             resolvent: resolvent_id
         }
     }
@@ -64,7 +64,8 @@ impl ResolutionProof {
         if clause_id >= 0 {
             self.root_clauses.get(clause_id as usize)
         } else {
-            self.intermediate_clauses.get((-clause_id) as usize)
+            // IDs for intermediate resolvents starts at -1, -2,...
+            self.intermediate_clauses.get((-(clause_id + 1)) as usize)
         }
     }
 
@@ -115,11 +116,12 @@ impl ResolutionProof {
         assert_eq!(id as usize, self.root_clauses.len() - 1);
     }
 
-    pub fn notify_resolution(self: &mut ResolutionProof, resolvent_id: i32, left: i32, right: i32, pivot: i32, resolvent: &[i32]) {
+    pub fn notify_resolution(self: &mut ResolutionProof, resolvent_id: i32, left: i32, right: i32, pivot_var: i32, resolvent: &[i32]) {
         let resolved_clause = Clause::new(
             resolvent.iter().map(|&lit| Literal::from(lit))
         );
 
+        let pivot = Literal::from_var(pivot_var);
         self.resolution_steps.push(ResolutionStep::new(left, right, pivot, resolvent_id));
 
         if resolvent_id >= 0 {

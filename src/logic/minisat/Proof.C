@@ -265,15 +265,19 @@ std::unique_ptr<std::vector<int32_t>> toVec(const vec<Lit>& c) {
     return out;
 }
 
-static void resolve(vec<Lit>& main, vec<Lit>& other, Var x)
+static bool resolve(vec<Lit>& main, vec<Lit>& other, Var x)
 {
     Lit  p;
+    bool main_contains_positive_pivot = false;
     bool ok1 = false, ok2 = false;
+
     for (int i = 0; i < main.size(); i++){
         if (var(main[i]) == x){
             ok1 = true, p = main[i];
-            main[i] = main.last();
+            main[i] = main.last();  // replace pivot lit with last lit
             main.pop();
+
+            main_contains_positive_pivot = sign(p) == 0;
             break;
         }
     }
@@ -282,7 +286,7 @@ static void resolve(vec<Lit>& main, vec<Lit>& other, Var x)
         if (var(other[i]) != x)
             main.push(other[i]);
         else{
-            if (p != ~other[i])
+            if (p != ~other[i])  // x lit in other must be negation of x lit in main
                 printf("PROOF ERROR! Resolved on variable with SAME polarity in both clauses: %d\n", x+1);
             ok2 = true;
         }
@@ -292,6 +296,7 @@ static void resolve(vec<Lit>& main, vec<Lit>& other, Var x)
         printf("PROOF ERROR! Resolved on missing variable: %d\n", x+1);
 
     sortUnique(main);
+    return main_contains_positive_pivot;
 }
 
 void CallbackTraverser::root(const vec<Lit>& c) {
@@ -318,7 +323,7 @@ void CallbackTraverser::chain(const vec<ClauseId>& cs, const vec<Var>& xs) {
     clauses[cs[0]].copyTo(c);
 
     for (int i = 0; i < xs.size(); i++) {
-        resolve(c, clauses[cs[i+1]], xs[i]);
+        const bool left_contains_positive_pivot = resolve(c, clauses[cs[i+1]], xs[i]);
 
         // If we are not in the first iteration any more, then the left resolution parent is the previous resolvent
         const int left_parent_id = i == 0 ? cs[0] : resolvent_id;
@@ -327,7 +332,12 @@ void CallbackTraverser::chain(const vec<ClauseId>& cs, const vec<Var>& xs) {
         const int result_id = i == xs.size() - 1 ? clauses.size() - 1 : --resolvent_id;
 
         const auto temp_lits_slice = toSlice(c, lits_temp_vec);
-        resolution.notify_resolution(result_id, left_parent_id, cs[i+1], xs[i]+1, temp_lits_slice);
+        // We guarantee that the pivot literal always occurs positively in the LEFT parent clause
+        if (left_contains_positive_pivot) {
+            resolution.notify_resolution(result_id, left_parent_id, cs[i+1], xs[i], temp_lits_slice);
+        } else {
+            resolution.notify_resolution(result_id, cs[i+1], left_parent_id, xs[i], temp_lits_slice);
+        }
     }
 }
 
