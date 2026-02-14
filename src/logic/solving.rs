@@ -5,7 +5,6 @@ use crate::logic::types::{Clause, CNF, XCNF};
 
 use cxx::{CxxVector, UniquePtr};
 use ffi::SolverStub;
-use lazy_static::lazy_static;
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::Neg;
 use std::pin::Pin;
@@ -16,10 +15,8 @@ pub const BOTTOM: i32 = 0;
 pub const TOP: i32 = BOTTOM + 1;
 pub const VAR_OFFSET: usize = 1;
 
-lazy_static! {
-    pub static ref TRUE: Literal = Literal::raw(TOP);
-    pub static ref FALSE: Literal = Literal::raw(BOTTOM);
-}
+pub const TRUE: Literal = Literal::raw(TOP);
+pub const FALSE: Literal = Literal::raw(BOTTOM);
 
 
 #[cxx::bridge]
@@ -56,20 +53,20 @@ pub mod ffi {
 }
 
 impl Literal {
-    pub fn from_var(var: i32) -> Self {
+    pub const fn from_var(var: i32) -> Self {
         Self { id: var << 1 }
     }
-    pub fn raw(lit_id: i32) -> Self {
+    pub const fn raw(lit_id: i32) -> Self {
         Self { id: lit_id }
     }
 
-    pub fn var(&self) -> i32 {
+    pub const fn var(&self) -> i32 {
         self.id >> 1
     }
-    pub fn is_pos(&self) -> bool {
+    pub const fn is_pos(&self) -> bool {
         self.id & 1 == 0
     }
-    pub fn unsign(&self) -> Literal {
+    pub const fn unsign(&self) -> Literal {
         Literal { id: self.id & !1 }
     }
 }
@@ -170,11 +167,11 @@ impl Solver {
     #[allow(non_snake_case)]
     pub fn tseitin_or(&mut self, left: &XCNF, right: &XCNF) -> XCNF {
         // Detect trivial cases
-        if left == *TRUE || right == *TRUE {
-            return XCNF::from(*TRUE);
-        } else if left == *FALSE {
+        if left == TRUE || right == TRUE {
+            return XCNF::from(TRUE);
+        } else if left == FALSE {
             return (*right).clone();
-        } else if right == *FALSE {
+        } else if right == FALSE {
             return (*left).clone();
         }
 
@@ -192,11 +189,11 @@ impl Solver {
 
     pub fn tseitin_and(&mut self, left: &XCNF, right: &XCNF) -> XCNF {
         // Detect trivial cases
-        if left == *FALSE || right == *FALSE {
-            return XCNF::from(*FALSE);
-        } else if left == *TRUE {
+        if left == FALSE || right == FALSE {
+            return XCNF::from(FALSE);
+        } else if left == TRUE {
             return (*right).clone();
-        } else if right == *TRUE {
+        } else if right == TRUE {
             return (*left).clone();
         }
 
@@ -215,5 +212,22 @@ impl Solver {
     /// Quick and idiomatic access to a pinned mutable reference of the underlying solver.
     fn remote(&mut self) -> Pin<&mut SolverStub> {
         self.stub.pin_mut()
+    }
+}
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tseitin_or() {
+
+    }
+
+    #[test]
+    fn tseitin_and() {
+
     }
 }

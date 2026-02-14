@@ -105,8 +105,8 @@ impl BmcModel<'_> {
     fn signal_at_time(&mut self, signal: &Signal, time: u32) -> Result<Literal, ModelCheckingError> {
         match signal {
             // For the constant signals, always return the same fixed literal (irrespective of the time step)
-            Signal::Constant(true) => Ok(*TRUE),
-            Signal::Constant(false) => Ok(*FALSE),
+            Signal::Constant(true) => Ok(TRUE),
+            Signal::Constant(false) => Ok(FALSE),
             Signal::Var(aig_var) => {
                 if let Some(step_vars) = self.time_steps.get_mut(time as usize) {
                     let lit = *step_vars.entry(aig_var.idx()).or_insert_with(||self.solver.add_var());
@@ -175,11 +175,11 @@ impl BmcModel<'_> {
 
         // Base case: Annotate root clauses in partition A/B with Bottom/Top
         for A_clause_id in proof.clauses_in_partition(Partition::A) {
-            interpolants.insert(*A_clause_id, (*FALSE).into());
+            interpolants.insert(*A_clause_id, FALSE.into());
         }
 
         for B_clause_id in proof.clauses_in_partition(Partition::B) {
-            interpolants.insert(*B_clause_id, (*TRUE).into());
+            interpolants.insert(*B_clause_id, TRUE.into());
         }
 
         // Inductive case: Compute new part. interpolant from previous part. interpolants
