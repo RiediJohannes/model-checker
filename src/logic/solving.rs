@@ -234,6 +234,26 @@ mod tests {
         }
     }
 
+    impl XCNF {
+        fn contains_all(&self, clauses: &[Clause]) -> bool {
+            clauses.iter().all(|c| self.formula.clauses.contains(c))
+        }
+    }
+
+    fn setup_interpolants() -> (Solver, XCNF, XCNF, usize) {
+        const N_VARS: usize = 4;
+        let mut solver = Solver::new();
+        let vars = solver.add_vars(N_VARS);
+        let (x, y, z1, z2) = (vars[0], vars[1], vars[2], vars[3]);
+
+        let I1 = XCNF::new(cnf![[-z1, x], [-z1, y], [z1, -x, -y]], z1);
+        let I2 = XCNF::new(cnf![[z2, -x], [z2, -y], [-z2, x, y]], z2);
+
+        let id_counter = VAR_OFFSET - 1 + N_VARS;
+        assert_eq!(z2.var() as usize, id_counter);
+        (solver, I1, I2, id_counter)
+    }
+
     /// Checks if the solver meets the expected preconditions upon construction via the new function.
     #[test]
     fn solver_preconditions() {
@@ -342,20 +362,10 @@ mod tests {
 
     #[test]
     fn tseitin_or_arbitrary() {
-        let mut solver = Solver::new();
         let T = XCNF::from(TRUE);
         let F = XCNF::from(FALSE);
 
-        const N_VARS: usize = 4;
-        let mut id_counter = VAR_OFFSET - 1;
-        let vars = solver.add_vars(N_VARS); id_counter += N_VARS;
-        let x = vars[0];
-        let y = vars[1];
-        let z1 = vars[2];
-        let z2 = vars[3];
-        assert_eq!(z2.var() as usize, id_counter);
-        let I1 = XCNF::new(cnf![[-z1, x], [-z1, y], [z1, -x, -y]], z1);
-        let I2 = XCNF::new(cnf![[z2, -x], [z2, -y], [-z2, x, y]], z2);
+        let (mut solver, I1, I2, mut id_counter) = setup_interpolants();
 
         // Case 1: I or TRUE
         let I1_or_T = solver.tseitin_or(&I1, &T);
@@ -376,12 +386,8 @@ mod tests {
         // Case 3: I1 or I2
         let I1_or_I2 = solver.tseitin_or(&I1, &I2);
         id_counter += 1;  // this time, the tseitin transformation needs an auxiliary variable
-        for C1 in &I1.formula {
-            assert!(&I1_or_I2.formula.clauses.contains(C1));
-        }
-        for C2 in &I2.formula {
-            assert!(&I1_or_I2.formula.clauses.contains(C2));
-        }
+        assert!(I1_or_I2.contains_all(&I1.formula.clauses));
+        assert!(I1_or_I2.contains_all(&I2.formula.clauses));
 
         // Check if the tseitin clauses and variable were added correctly
         assert_eq!(I1_or_I2.formula.len(), I1.formula.len() + I2.formula.len() + 3);
@@ -394,9 +400,7 @@ mod tests {
             Clause::from([t, -I2.out_lit]),
             Clause::from([-t, I1.out_lit, I2.out_lit])
         ];
-        for C_T in tseitin_clauses {
-            assert!(&I1_or_I2.formula.clauses.contains(&C_T));
-        }
+        assert!(I1_or_I2.contains_all(&tseitin_clauses));
 
         // Check: We needed exactly one additional variable, no more
         let x_next = solver.add_var(); id_counter += 1;
@@ -428,21 +432,12 @@ mod tests {
         assert_eq!(x_next.var(), VAR_OFFSET as i32);
     }
 
+    #[test]
     fn tseitin_and_arbitrary() {
-        let mut solver = Solver::new();
         let T = XCNF::from(TRUE);
         let F = XCNF::from(FALSE);
 
-        const N_VARS: usize = 4;
-        let mut id_counter = VAR_OFFSET - 1;
-        let vars = solver.add_vars(N_VARS); id_counter += N_VARS;
-        let x = vars[0];
-        let y = vars[1];
-        let z1 = vars[2];
-        let z2 = vars[3];
-        assert_eq!(z2.var() as usize, id_counter);
-        let I1 = XCNF::new(cnf![[-z1, x], [-z1, y], [z1, -x, -y]], z1);
-        let I2 = XCNF::new(cnf![[z2, -x], [z2, -y], [-z2, x, y]], z2);
+        let (mut solver, I1, I2, mut id_counter) = setup_interpolants();
 
         // Case 1: I or TRUE
         let I1_and_T = solver.tseitin_and(&I1, &T);
@@ -463,12 +458,8 @@ mod tests {
         // Case 3: I1 or I2
         let I1_and_I2 = solver.tseitin_and(&I1, &I2);
         id_counter += 1;  // this time, the tseitin transformation needs an auxiliary variable
-        for C1 in &I1.formula {
-            assert!(&I1_and_I2.formula.clauses.contains(C1));
-        }
-        for C2 in &I2.formula {
-            assert!(&I1_and_I2.formula.clauses.contains(C2));
-        }
+        assert!(I1_and_I2.contains_all(&I1.formula.clauses));
+        assert!(I1_and_I2.contains_all(&I2.formula.clauses));
 
         // Check if the tseitin clauses and variable were added correctly
         assert_eq!(I1_and_I2.formula.len(), I1.formula.len() + I2.formula.len() + 3);
@@ -481,9 +472,7 @@ mod tests {
             Clause::from([-t, I2.out_lit]),
             Clause::from([t, -I1.out_lit, -I2.out_lit])
         ];
-        for C_T in tseitin_clauses {
-            assert!(&I1_and_I2.formula.clauses.contains(&C_T));
-        }
+        assert!(I1_and_I2.contains_all(&tseitin_clauses));
 
         // Check: We needed exactly one additional variable, no more
         let x_next = solver.add_var(); id_counter += 1;
