@@ -212,7 +212,7 @@ impl BmcModel<'_> {
             println!(
                 "I_L: {:?},\n\
                 I_R: {:?},\n\
-                -- Resolving on literal {:?} (partition: {:?})\n\
+                -- Resolving on literal {:} (partition: {:?})\n\
                 => {:?}\n",
                 &I_L, &I_R, &step.pivot, &pivot_partition, &I_resolvent
             );

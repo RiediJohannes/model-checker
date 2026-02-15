@@ -166,11 +166,11 @@ impl Solver {
     #[allow(non_snake_case)]
     pub fn tseitin_or(&mut self, left: &XCNF, right: &XCNF) -> XCNF {
         // Detect trivial cases
-        if left == TRUE || right == TRUE {
+        if left == &TRUE || right == &TRUE {
             return XCNF::from(TRUE);
-        } else if left == FALSE {
+        } else if left == &FALSE {
             return (*right).clone();
-        } else if right == FALSE {
+        } else if right == &FALSE {
             return (*left).clone();
         }
 
@@ -182,17 +182,17 @@ impl Solver {
             c1 & c2 & c3
         };
 
-        let clauses = &left.clauses & &right.clauses & &tseitin_clauses;
+        let clauses = &left.formula & &right.formula & &tseitin_clauses;
         XCNF::new(clauses, tseitin_lit)
     }
 
     pub fn tseitin_and(&mut self, left: &XCNF, right: &XCNF) -> XCNF {
         // Detect trivial cases
-        if left == FALSE || right == FALSE {
+        if left == &FALSE || right == &FALSE {
             return XCNF::from(FALSE);
-        } else if left == TRUE {
+        } else if left == &TRUE {
             return (*right).clone();
-        } else if right == TRUE {
+        } else if right == &TRUE {
             return (*left).clone();
         }
 
@@ -204,7 +204,7 @@ impl Solver {
             c1 & c2 & c3
         };
 
-        let clauses = &left.clauses & &right.clauses & &tseitin_clauses;
+        let clauses = &left.formula & &right.formula & &tseitin_clauses;
         XCNF::new(clauses, tseitin_lit)
     }
 
@@ -215,13 +215,24 @@ impl Solver {
 }
 
 
+// ============== Unit Tests ================
 
 #[cfg(test)]
 #[allow(non_snake_case)]
 mod tests {
+    use crate::cnf;
     use crate::logic::resolution::Partition;
     use crate::logic::solving::{Solver, FALSE, VAR_OFFSET};
-    use crate::logic::{types, Clause, Literal};
+    use crate::logic::{types, Clause, Literal, TRUE, XCNF};
+
+    impl Solver {
+        /// Helper function to collect the added clause in a Clause struct
+        fn add_and_get_clause<L>(&mut self, literals: L) -> Clause
+        where L: AsRef<[Literal]>, types::Clause: From<L> {
+            self.add_clause(literals.as_ref());
+            Clause::from(literals)
+        }
+    }
 
     /// Checks if the solver meets the expected preconditions upon construction via the new function.
     #[test]
@@ -305,27 +316,177 @@ mod tests {
     }
 
     #[test]
-    fn tseitin_or_partition_A() {
+    fn tseitin_or_trivial() {
+        let mut solver = Solver::new();
+        let T = XCNF::from(TRUE);
+        let F = XCNF::from(FALSE);
+
         // Case 1: Trivial TRUE
-        // XCNF::from(TRUE);
+        let T_or_T = solver.tseitin_or(&T, &T);
+        assert_eq!(&T_or_T, &T);
 
-        // Case 2: Trivial FALSE
-        // XCNF::from(FALSE);
+        // Case 1: Trivial mixed TRUE/FALSE
+        let T_or_F = solver.tseitin_or(&T, &F);
+        assert_eq!(&T_or_F, &T);
+        let F_or_T = solver.tseitin_or(&F, &T);
+        assert_eq!(&F_or_T, &T);
 
-        // Case 3: Arbitrary formulas
+        // Case 3: Trivial FALSE
+        let F_or_F = solver.tseitin_or(&F, &F);
+        assert_eq!(&F_or_F, &F);
+
+        // Assert that we did not need any auxiliary tseitin variables for these cases
+        let x_next = solver.add_var();
+        assert_eq!(x_next.var(), VAR_OFFSET as i32);
     }
 
     #[test]
-    fn tseitin_and() {
+    fn tseitin_or_arbitrary() {
+        let mut solver = Solver::new();
+        let T = XCNF::from(TRUE);
+        let F = XCNF::from(FALSE);
 
+        const N_VARS: usize = 4;
+        let mut id_counter = VAR_OFFSET - 1;
+        let vars = solver.add_vars(N_VARS); id_counter += N_VARS;
+        let x = vars[0];
+        let y = vars[1];
+        let z1 = vars[2];
+        let z2 = vars[3];
+        assert_eq!(z2.var() as usize, id_counter);
+        let I1 = XCNF::new(cnf![[-z1, x], [-z1, y], [z1, -x, -y]], z1);
+        let I2 = XCNF::new(cnf![[z2, -x], [z2, -y], [-z2, x, y]], z2);
+
+        // Case 1: I or TRUE
+        let I1_or_T = solver.tseitin_or(&I1, &T);
+        assert_eq!(&I1_or_T, &T);
+        let I2_or_T = solver.tseitin_or(&I2, &T);
+        assert_eq!(&I2_or_T, &T);
+
+        // Case 2: I or FALSE
+        let I1_or_F = solver.tseitin_or(&I1, &F);
+        assert_eq!(&I1_or_F, &I1);
+        let I2_or_F = solver.tseitin_or(&I2, &F);
+        assert_eq!(&I2_or_F, &I2);
+
+        // Assert that we did not need any additional tseitin variables for these cases
+        let x_next = solver.add_var(); id_counter += 1;
+        assert_eq!(x_next.var() as usize, id_counter);
+
+        // Case 3: I1 or I2
+        let I1_or_I2 = solver.tseitin_or(&I1, &I2);
+        id_counter += 1;  // this time, the tseitin transformation needs an auxiliary variable
+        for C1 in &I1.formula {
+            assert!(&I1_or_I2.formula.clauses.contains(C1));
+        }
+        for C2 in &I2.formula {
+            assert!(&I1_or_I2.formula.clauses.contains(C2));
+        }
+
+        // Check if the tseitin clauses and variable were added correctly
+        assert_eq!(I1_or_I2.formula.len(), I1.formula.len() + I2.formula.len() + 3);
+        // The now top variable should have become the output literal
+        let t = Literal::from_var(id_counter as i32);
+        assert_eq!(I1_or_I2.out_lit, t);
+
+        let tseitin_clauses = vec![
+            Clause::from([t, -I1.out_lit]),
+            Clause::from([t, -I2.out_lit]),
+            Clause::from([-t, I1.out_lit, I2.out_lit])
+        ];
+        for C_T in tseitin_clauses {
+            assert!(&I1_or_I2.formula.clauses.contains(&C_T));
+        }
+
+        // Check: We needed exactly one additional variable, no more
+        let x_next = solver.add_var(); id_counter += 1;
+        assert_eq!(x_next.var() as usize, id_counter);
     }
 
-    impl Solver {
-        /// Helper function to collect the added clause in a Clause struct
-        fn add_and_get_clause<L>(&mut self, literals: L) -> Clause
-        where L: AsRef<[Literal]>, types::Clause: From<L> {
-            self.add_clause(literals.as_ref());
-            Clause::from(literals)
+    #[test]
+    fn tseitin_and_trivial() {
+        let mut solver = Solver::new();
+        let T = XCNF::from(TRUE);
+        let F = XCNF::from(FALSE);
+
+        // Case 1: Trivial TRUE
+        let T_and_T = solver.tseitin_and(&T, &T);
+        assert_eq!(&T_and_T, &T);
+
+        // Case 1: Trivial mixed TRUE/FALSE
+        let T_and_F = solver.tseitin_and(&T, &F);
+        assert_eq!(&T_and_F, &F);
+        let F_and_T = solver.tseitin_and(&F, &T);
+        assert_eq!(&F_and_T, &F);
+
+        // Case 3: Trivial FALSE
+        let F_and_F = solver.tseitin_and(&F, &F);
+        assert_eq!(&F_and_F, &F);
+
+        // Assert that we did not need any auxiliary tseitin variables for these cases
+        let x_next = solver.add_var();
+        assert_eq!(x_next.var(), VAR_OFFSET as i32);
+    }
+
+    fn tseitin_and_arbitrary() {
+        let mut solver = Solver::new();
+        let T = XCNF::from(TRUE);
+        let F = XCNF::from(FALSE);
+
+        const N_VARS: usize = 4;
+        let mut id_counter = VAR_OFFSET - 1;
+        let vars = solver.add_vars(N_VARS); id_counter += N_VARS;
+        let x = vars[0];
+        let y = vars[1];
+        let z1 = vars[2];
+        let z2 = vars[3];
+        assert_eq!(z2.var() as usize, id_counter);
+        let I1 = XCNF::new(cnf![[-z1, x], [-z1, y], [z1, -x, -y]], z1);
+        let I2 = XCNF::new(cnf![[z2, -x], [z2, -y], [-z2, x, y]], z2);
+
+        // Case 1: I or TRUE
+        let I1_and_T = solver.tseitin_and(&I1, &T);
+        assert_eq!(&I1_and_T, &I1);
+        let I2_and_T = solver.tseitin_and(&I2, &T);
+        assert_eq!(&I2_and_T, &I2);
+
+        // Case 2: I or FALSE
+        let I1_and_F = solver.tseitin_and(&I1, &F);
+        assert_eq!(&I1_and_F, &F);
+        let I2_and_F = solver.tseitin_and(&I2, &F);
+        assert_eq!(&I2_and_F, &F);
+
+        // Assert that we did not need any additional tseitin variables for these cases
+        let x_next = solver.add_var(); id_counter += 1;
+        assert_eq!(x_next.var() as usize, id_counter);
+
+        // Case 3: I1 or I2
+        let I1_and_I2 = solver.tseitin_and(&I1, &I2);
+        id_counter += 1;  // this time, the tseitin transformation needs an auxiliary variable
+        for C1 in &I1.formula {
+            assert!(&I1_and_I2.formula.clauses.contains(C1));
         }
+        for C2 in &I2.formula {
+            assert!(&I1_and_I2.formula.clauses.contains(C2));
+        }
+
+        // Check if the tseitin clauses and variable were added correctly
+        assert_eq!(I1_and_I2.formula.len(), I1.formula.len() + I2.formula.len() + 3);
+        // The now top variable should have become the output literal
+        let t = Literal::from_var(id_counter as i32);
+        assert_eq!(I1_and_I2.out_lit, t);
+
+        let tseitin_clauses = vec![
+            Clause::from([-t, I1.out_lit]),
+            Clause::from([-t, I2.out_lit]),
+            Clause::from([t, -I1.out_lit, -I2.out_lit])
+        ];
+        for C_T in tseitin_clauses {
+            assert!(&I1_and_I2.formula.clauses.contains(&C_T));
+        }
+
+        // Check: We needed exactly one additional variable, no more
+        let x_next = solver.add_var(); id_counter += 1;
+        assert_eq!(x_next.var() as usize, id_counter);
     }
 }

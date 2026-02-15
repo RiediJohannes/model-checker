@@ -1,10 +1,11 @@
 #![allow(clippy::upper_case_acronyms)]
 
+use std::cmp::PartialEq;
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::{BitAnd, Index};
 use super::solving::Literal;
 
-#[derive(Clone,PartialEq,Eq)]
+#[derive(Clone, Eq)]
 pub struct Clause {
     lits: Box<[Literal]>,
 }
@@ -53,6 +54,12 @@ impl Display for Clause {
         )
     }
 }
+impl PartialEq<Clause> for Clause {
+    fn eq(&self, other: &Clause) -> bool {
+        self.lits.len() == other.lits.len()
+            && self.lits.iter().all(|l| other.lits.contains(l))
+    }
+}
 impl<'a> IntoIterator for &'a Clause {
     type Item = Literal;
     type IntoIter = std::iter::Copied<std::slice::Iter<'a, Literal>>;
@@ -86,7 +93,13 @@ impl Index<usize> for CNF {
         &self.clauses[index]
     }
 }
-impl PartialEq<Literal> for &CNF {
+impl PartialEq<CNF> for CNF {
+    fn eq(&self, other: &CNF) -> bool {
+        self.clauses.len() == other.clauses.len()
+            && self.clauses.iter().all(|item| other.clauses.contains(item))
+    }
+}
+impl PartialEq<Literal> for CNF {
     fn eq(&self, lit: &Literal) -> bool {
         self.clauses.len() == 1
             && self.clauses[0].lits.len() == 1
@@ -126,6 +139,14 @@ impl Debug for CNF {
                    .collect::<Vec<_>>()
                    .join(", ")
         )
+    }
+}
+impl<'a> IntoIterator for &'a CNF {
+    type Item = &'a Clause;
+    type IntoIter = std::slice::Iter<'a, Clause>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.clauses.iter()
     }
 }
 #[allow(clippy::suspicious_arithmetic_impl)]
@@ -174,25 +195,25 @@ macro_rules! cnf {
 
 /// Short for Extended CNF.</br>
 /// Extends a formula in CNF by an output tseitin literal that is true iff the formula is satisfiable.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct XCNF {
-    pub clauses: CNF,
+    pub formula: CNF,
     pub out_lit: Literal
 }
 
 impl XCNF {
     pub fn new(clauses: CNF, output_literal: Literal) -> Self {
         Self {
-            clauses,
+            formula: clauses,
             out_lit: output_literal
         }
     }
 }
-impl PartialEq<Literal> for &XCNF {
+impl PartialEq<Literal> for XCNF {
     fn eq(&self, lit: &Literal) -> bool {
-        self.clauses.len() == 1
-            && self.clauses[0].lits.len() == 1
-            && self.clauses[0].lits[0] == *lit
+        self.formula.len() == 1
+            && self.formula[0].lits.len() == 1
+            && self.formula[0].lits[0] == *lit
     }
 }
 impl From<Literal> for XCNF {
@@ -202,7 +223,7 @@ impl From<Literal> for XCNF {
 }
 impl Debug for XCNF {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "XCNF {{ clauses: {{ {:?} }}, out_lit: {} }}", self.clauses, self.out_lit)
+        write!(f, "XCNF {{ clauses: {{ {:?} }}, out_lit: {} }}", self.formula, self.out_lit)
     }
 }
 
@@ -243,16 +264,16 @@ mod tests {
     fn xcnf_from_unit() {
         let a = Literal::from_var(1);
         let xcnf = XCNF::from(a);
-        assert_eq!(xcnf.clauses.len(), 1);
-        assert_eq!(xcnf.clauses[0].lits.len(), 1);
-        assert_eq!(xcnf.clauses[0].lits[0], a);
+        assert_eq!(xcnf.formula.len(), 1);
+        assert_eq!(xcnf.formula[0].lits.len(), 1);
+        assert_eq!(xcnf.formula[0].lits[0], a);
         assert_eq!(xcnf.out_lit, a);
 
         let b = Literal::from_var(2);
         let xcnf = XCNF::from(-b);
-        assert_eq!(xcnf.clauses.len(), 1);
-        assert_eq!(xcnf.clauses[0].lits.len(), 1);
-        assert_eq!(xcnf.clauses[0].lits[0], -b);
+        assert_eq!(xcnf.formula.len(), 1);
+        assert_eq!(xcnf.formula[0].lits.len(), 1);
+        assert_eq!(xcnf.formula[0].lits[0], -b);
         assert_eq!(xcnf.out_lit, -b);
     }
 
