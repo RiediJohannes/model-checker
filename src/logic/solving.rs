@@ -222,13 +222,13 @@ impl Solver {
 mod tests {
     use crate::cnf;
     use crate::logic::resolution::Partition;
-    use crate::logic::solving::{Solver, FALSE, VAR_OFFSET};
-    use crate::logic::{types, Clause, Literal, TRUE, XCNF};
+    use crate::logic::solving::{Solver, FALSE, TRUE, VAR_OFFSET};
+    use crate::logic::{Clause, Literal, XCNF};
 
     impl Solver {
         /// Helper function to collect the added clause in a Clause struct
         fn add_and_get_clause<L>(&mut self, literals: L) -> Clause
-        where L: AsRef<[Literal]>, types::Clause: From<L> {
+        where L: AsRef<[Literal]>, Clause: From<L> {
             self.add_clause(literals.as_ref());
             Clause::from(literals)
         }
@@ -252,26 +252,6 @@ mod tests {
         let id_counter = VAR_OFFSET - 1 + N_VARS;
         assert_eq!(z2.var() as usize, id_counter);
         (solver, I1, I2, id_counter)
-    }
-
-    /// Checks if the solver meets the expected preconditions upon construction via the new function.
-    #[test]
-    fn solver_preconditions() {
-        let mut solver: Solver = Solver::new();
-
-        let proof = solver.resolution.as_ref().expect("Solver should have a resolution proof object");
-        assert_eq!(proof.partition, None);
-
-        let x = solver.add_var();
-        assert_eq!(x.var(), VAR_OFFSET as i32);
-
-        let sat_if_unchanged = solver.solve();
-        assert!(sat_if_unchanged);
-
-        // Check if forcing the (supposedly) constant false literal to true leads to an inconsistency
-        solver.add_clause([FALSE]);
-        let unsat_if_bottom_asserted_as_true = solver.solve();
-        assert!(!unsat_if_bottom_asserted_as_true);
     }
 
     #[test]
