@@ -11,10 +11,10 @@ use std::pin::Pin;
 
 
 // Fixed IDs to use for SAT variables representing boolean constants
-pub const BOTTOM: i32 = 0;
-pub const TOP: i32 = BOTTOM + 1;
-pub const VAR_OFFSET: usize = 1;
+const BOTTOM: i32 = 0;
+const TOP: i32 = BOTTOM + 1;
 
+pub const VAR_OFFSET: usize = 1;
 pub const TRUE: Literal = Literal::raw(TOP);
 pub const FALSE: Literal = Literal::raw(BOTTOM);
 
@@ -113,12 +113,11 @@ impl Solver {
             resolution: Some(resolution),
         };
 
-        // Add the constant false literal to the solver
         solver.clear_partition();
 
+        // Add the constant false literal to the solver
         let bottom = solver.add_var();
         assert_eq!(bottom.var(), BOTTOM);
-
         solver.add_clause([-bottom]);
 
         solver
@@ -218,16 +217,115 @@ impl Solver {
 
 
 #[cfg(test)]
+#[allow(non_snake_case)]
 mod tests {
-    use super::*;
+    use crate::logic::resolution::Partition;
+    use crate::logic::solving::{Solver, FALSE, VAR_OFFSET};
+    use crate::logic::{types, Clause, Literal};
+
+    /// Checks if the solver meets the expected preconditions upon construction via the new function.
+    #[test]
+    fn solver_preconditions() {
+        let mut solver: Solver = Solver::new();
+
+        let proof = solver.resolution.as_ref().expect("Solver should have a resolution proof object");
+        assert_eq!(proof.partition, None);
+
+        let x = solver.add_var();
+        assert_eq!(x.var(), VAR_OFFSET as i32);
+
+        let sat_if_unchanged = solver.solve();
+        assert!(sat_if_unchanged);
+
+        // Check if forcing the (supposedly) constant false literal to true leads to an inconsistency
+        solver.add_clause([FALSE]);
+        let unsat_if_bottom_asserted_as_true = solver.solve();
+        assert!(!unsat_if_bottom_asserted_as_true);
+    }
 
     #[test]
-    fn tseitin_or() {
+    fn variable_partition() {
+        let mut solver = Solver::new();
 
+        let a1 = solver.add_var();
+        let a2 = solver.add_var();
+        let s  = solver.add_var();
+        let b1 = solver.add_var();
+        let b2 = solver.add_var();
+
+        solver.set_partition(Partition::A);
+        solver.add_clause([-a1, a2]);
+        solver.add_clause([a2, s]);
+
+        solver.set_partition(Partition::B);
+        solver.add_clause([b1, -b2]);
+        solver.add_clause([b1, -s]);
+        // Force unsatisfiability
+        solver.add_clause([-b1]);
+        solver.add_clause([s]);
+
+        assert!(!solver.solve());  // formula should be unsat
+
+        let proof = solver.resolution.as_ref().unwrap();
+        assert_eq!(proof.var_partition(a1), Some(Partition::A));
+        assert_eq!(proof.var_partition(a2), Some(Partition::A));
+        assert_eq!(proof.var_partition(s),  Some(Partition::AB));
+        assert_eq!(proof.var_partition(b1), Some(Partition::B));
+        assert_eq!(proof.var_partition(b2), Some(Partition::B));
+    }
+
+    #[test]
+    fn clause_partition() {
+        let mut solver = Solver::new();
+
+        let x = solver.add_var();
+        let y = solver.add_var();
+        let z  = solver.add_var();
+
+        solver.set_partition(Partition::A);
+        let C_A1 = solver.add_and_get_clause([-x, y]);
+        let C_A2 = solver.add_and_get_clause([-y, z]);
+
+        solver.set_partition(Partition::B);
+        let C_B1 = solver.add_and_get_clause([x]);
+        let C_B2 = solver.add_and_get_clause([-x, y]);  // duplicate from partition A
+        let C_B3 = solver.add_and_get_clause([-y, -z]);
+
+        assert!(!solver.solve());  // formula should be unsat
+
+        let proof = solver.resolution.as_ref().unwrap();
+        let A_clauses: Vec<Clause> = proof.clauses_in_partition(Partition::A).map(|c| proof.get_clause(*c).unwrap().clone()).collect();
+        let B_clauses: Vec<Clause> = proof.clauses_in_partition(Partition::B).map(|c| proof.get_clause(*c).unwrap().clone()).collect();
+
+        assert!(A_clauses.contains(&C_A1));
+        assert!(A_clauses.contains(&C_A2));
+        assert!(B_clauses.contains(&C_B1));
+        assert!(B_clauses.contains(&C_B2));
+        assert!(B_clauses.contains(&C_B3));
+    }
+
+    #[test]
+    fn tseitin_or_partition_A() {
+        // Case 1: Trivial TRUE
+        // XCNF::from(TRUE);
+
+        // Case 2: Trivial FALSE
+        // XCNF::from(FALSE);
+
+        // Case 3: Arbitrary formulas
     }
 
     #[test]
     fn tseitin_and() {
 
+    }
+
+    impl Solver {
+        /// Helper function to collect the added clause in a Clause struct
+        fn add_and_get_clause<L>(&mut self, literals: L) -> Clause
+        where L: AsRef<[Literal]>, types::Clause: From<L> {
+            self.add_clause(literals.as_ref());
+            Clause::from(literals)
+        }
     }
 }
