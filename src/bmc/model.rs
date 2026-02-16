@@ -37,7 +37,11 @@ pub fn load_model(name: &str) -> Result<AIG, ParseError> {
 
 pub fn check_bounded(graph: &AIG, k: u32) -> Result<PropertyCheck, ModelCheckingError> {
     // Single iteration of bounded model checking
-    let mut bmc = BmcModel::from_aig(graph)?;
+    let mut bmc = BmcModel::from_aig(graph, k)?;
+
+    let q_0 = bmc.add_initial_states()?;
+    bmc.solver.add_clause([q_0]);
+
     bmc.unwind(k)?;
 
     let output = match bmc.check() {
@@ -59,8 +63,12 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
         // Seed BMC with initial states Q' and F from the transition relation unrolls
 
         // These two lines are just a placeholder
-        let mut bmc = BmcModel::from_aig(graph)?;
-        bmc.unwind(initial_bound)?;
+        let mut bmc = BmcModel::from_aig(graph, k)?;
+        // TODO Maybe merge this with the from_aig method and keep q_0 as a private member
+        let q_0 = bmc.add_initial_states()?;
+        bmc.solver.add_clause([q_0]);
+
+        bmc.unwind(k)?;
 
         if bmc.check() == ModelConclusion::Safe {
             let interpolant = bmc.compute_interpolant()
@@ -76,6 +84,7 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
             // }
 
             interpolants.push(interpolant);
+            return Ok(PropertyCheck::Ok);  // TODO Remove this line
         } else {
             if interpolants.is_empty() {
                 return Ok(PropertyCheck::Fail);
@@ -94,70 +103,59 @@ pub struct BmcModel<'a> {
 }
 
 impl BmcModel<'_> {
-    pub fn from_aig(graph: &'_ AIG) -> Result<BmcModel<'_>, ModelCheckingError> {
+
+    /// Creates a new bounded model checking (BMC) instance from an And-Inverter Graph (AIG).
+    /// The model immediately initializes all SAT variables needed to express the various circuit
+    /// signals in all time steps t in [0, k].
+    pub fn from_aig(graph: &'_ AIG, k: u32) -> Result<BmcModel<'_>, ModelCheckingError> {
         let mut model = BmcModel {
             graph,
             time_steps: Vec::new(),
             solver: Solver::new()
         };
 
-        model.solver.set_partition(Partition::A);
-        // Initialize variables for all signals at time step 0
-        model.add_step();
-        for var in graph.variables() {
-            model.signal_at_time(&Signal::Var(var), 0)?;
-        }
-
-        // AND-gates
-        for gate in graph.and_gates.iter() {
-            model.encode_and_gate(gate, 0)?;
-        }
-
-        // Latches
-        for latch in model.graph.latches.iter() {
-            let curr = model.signal_at_time(&latch.out, 0)?;
-            model.solver.add_clause([-curr]);
+        // Initialize variables for all signals at time steps 0..k
+        for t in 0..=k {
+            model.add_step();
+            for var in graph.variables() {
+                model.signal_at_time(&Signal::Var(var), t)?;
+            }
         }
 
         Ok(model)
     }
 
-    fn add_step(&mut self) -> usize {
-        self.time_steps.push(HashMap::with_capacity(self.graph.max_idx as usize));
-        self.time_steps.len() - 1  // return new time step id
-    }
+    /// Adds clauses for the exact (as opposed to over-approximated) initial states Q_0 to the solver.
+    /// Returns a **[Literal] q_0**, which enforces these initial states when set to true.
+    pub fn add_initial_states(&mut self) -> Result<Literal, ModelCheckingError> {
+        self.solver.set_partition(Partition::A);
 
-    fn signal_at_time(&mut self, signal: &Signal, time: u32) -> Result<Literal, ModelCheckingError> {
-        match signal {
-            // For the constant signals, always return the same fixed literal (irrespective of the time step)
-            Signal::Constant(true) => Ok(TRUE),
-            Signal::Constant(false) => Ok(FALSE),
-            Signal::Var(aig_var) => {
-                if let Some(step_vars) = self.time_steps.get_mut(time as usize) {
-                    let lit = *step_vars.entry(aig_var.idx()).or_insert_with(||self.solver.add_var());
-                    Ok(if aig_var.is_neg() { -lit } else { lit })
-                } else {
-                    Err(ModelCheckingError::InvalidTimeStep(time, (self.time_steps.len() + 1) as u32))
-                }
-            }
+        // Single literal to enforce (or deactivate) the initial latch state
+        let q_0 = self.solver.add_var();
+
+        // AND-gates
+        for gate in self.graph.and_gates.iter() {
+            self.encode_and_gate(gate, 0)?;
         }
+
+        // Latches
+        for latch in self.graph.latches.iter() {
+            let init_val = self.signal_at_time(&latch.out, 0)?;
+            self.solver.add_clause([-q_0, -init_val]);  // q_0 implies L_i@0 = 0
+        }
+
+        Ok(q_0)
     }
 
+    /// Unwinds the transition relation as described by the model's [AIG] graph `k` times
+    /// and adds the resulting clauses to the model's state.
     pub fn unwind(&'_ mut self, k: u32) -> Result<(), ModelCheckingError> {
         // We need variables for each input, latch, gate and output at each time step
         for t in 1..=k {
-            self.add_step();
-
             if t == 2 {
                 self.solver.set_partition(Partition::B);
             }
 
-            // Initialize variables for all signals at the current time step (for reasonable order)
-            for var in self.graph.variables() {
-                self.signal_at_time(&Signal::Var(var), t)?;
-            }
-
-            // Add SAT clauses
             // AND-gates
             for gate in self.graph.and_gates.iter() {
                 self.encode_and_gate(gate, t)?;
@@ -169,7 +167,7 @@ impl BmcModel<'_> {
         }
 
         // Assert that the output is true at SOME time step -> property violation
-        let property_violation_clause: Vec<Literal> = (0..=k)
+        let property_violation_clause: Vec<Literal> = (1..=k)
             .map(|t| self.signal_at_time(&self.graph.outputs[0], t))
             .collect::<Result<_, _>>()?;
 
@@ -178,6 +176,10 @@ impl BmcModel<'_> {
         Ok(())
     }
 
+    /// Check the property encoded by the current state of the [BmcModel].
+    /// ## Returns
+    /// - [ModelConclusion::CounterExample]: If a property violation could be found within the `k` unwinding steps.
+    /// - [ModelConclusion::Safe]: If the model is safe w.r.t. the first `k` unwinding steps.
     pub fn check(&mut self) -> ModelConclusion {
         // If the formula is SAT, the model's property was violated
         match self.solver.solve() {
@@ -191,6 +193,8 @@ impl BmcModel<'_> {
         }
     }
 
+    /// Computes an interpolant for the two inconsistent partitions `(A, B)` of clauses in the [BmcModel].
+    /// The resulting interpolant will over-approximate the states that satisfy the clauses in [Partition::A].
     #[allow(non_snake_case)]
     pub fn compute_interpolant(&mut self) -> Option<XCNF> {
         let mut interpolants: HashMap<i32, XCNF> = HashMap::new();
@@ -251,6 +255,33 @@ impl BmcModel<'_> {
         let final_interpolant = interpolants.remove(&last)?;
         // let final_interpolant = interpolants.get(&last)?.clone();
         Some(final_interpolant)
+    }
+
+    /* --- Private methods --- */
+
+    /// Explicitly adds a new time step to the model. [Literal]s for [Signal]s can only be instantiated
+    /// for time steps in the current range of unrolled time steps. Returns the new time step id.
+    fn add_step(&mut self) -> usize {
+        self.time_steps.push(HashMap::with_capacity(self.graph.max_idx as usize));
+        self.time_steps.len() - 1  // return new time step id
+    }
+
+    /// Retrieves the SAT [Literal] for the requested [Signal] at the given time step `t`.
+    /// If no literal exists for the given (Signal, `t`) pair, a new SAT variable is created and returned.
+    fn signal_at_time(&mut self, signal: &Signal, time: u32) -> Result<Literal, ModelCheckingError> {
+        match signal {
+            // For the constant signals, always return the same fixed literal (irrespective of the time step)
+            Signal::Constant(true) => Ok(TRUE),
+            Signal::Constant(false) => Ok(FALSE),
+            Signal::Var(aig_var) => {
+                if let Some(step_vars) = self.time_steps.get_mut(time as usize) {
+                    let lit = *step_vars.entry(aig_var.idx()).or_insert_with(||self.solver.add_var());
+                    Ok(if aig_var.is_neg() { -lit } else { lit })
+                } else {
+                    Err(ModelCheckingError::InvalidTimeStep(time, (self.time_steps.len() + 1) as u32))
+                }
+            }
+        }
     }
 
     fn encode_and_gate(&mut self, gate: &AndGate, t: u32) -> Result<(), ModelCheckingError> {

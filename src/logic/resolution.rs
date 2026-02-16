@@ -74,10 +74,10 @@ impl ResolutionProof {
             .get(&partition)
             .into_iter()    // Option -> Iterator (0 or 1 item)
             .flat_map(|ids| ids.iter())
-        // Optionally query the clause also
-        // .filter_map(move |&id| {
-        //     self.get_clause(id).map(|clause| (id, clause))
-        // })
+            // Optionally query the clause also
+            // .filter_map(move |&id| {
+            //     self.get_clause(id).map(|clause| (id, clause))
+            // })
     }
 
     pub fn var_partition(&self, lit: Literal) -> Option<Partition> {
