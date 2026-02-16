@@ -1,8 +1,8 @@
-use crate::bmc::aiger;
 use crate::bmc::aiger::{AndGate, Latch, ParseError, Signal, AIG};
+use crate::bmc::{aiger, debug};
 use crate::logic::resolution::Partition;
 use crate::logic::solving::Solver;
-use crate::logic::{Clause, Literal, XCNF, VAR_OFFSET, FALSE, TRUE};
+use crate::logic::{Clause, Literal, FALSE, TRUE, XCNF};
 
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -13,10 +13,19 @@ use thiserror::Error;
 pub enum ModelCheckingError {
     #[error("Tried to access a signal at time step {0}, but current model is only unrolled until t = {1}")]
     InvalidTimeStep(u32, u32),
+
+    #[error("Failed to compute interpolant for k = {0} at iteration {1}.")]
+    FailedInterpolation(u32, usize)
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Conclusion {
+pub enum ModelConclusion {
+    Safe,
+    CounterExample,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum PropertyCheck {
     Ok,
     Fail,
 }
@@ -26,40 +35,56 @@ pub fn load_model(name: &str) -> Result<AIG, ParseError> {
     aiger::parse_aiger_ascii(name)
 }
 
-pub fn check_bounded(graph: &AIG, k: u32) -> Result<Conclusion,ModelCheckingError> {
+pub fn check_bounded(graph: &AIG, k: u32) -> Result<PropertyCheck, ModelCheckingError> {
     // Single iteration of bounded model checking
     let mut bmc = BmcModel::from_aig(graph)?;
     bmc.unwind(k)?;
 
-    Ok(bmc.check())
+    let output = match bmc.check() {
+        ModelConclusion::Safe => PropertyCheck::Ok,
+        ModelConclusion::CounterExample => PropertyCheck::Fail
+    };
+    Ok(output)
 }
 
-pub fn check_interpolated(graph: &AIG, initial_k: u32) -> Result<Conclusion,ModelCheckingError> {
-    // TODO Implement interpolation loop until fixpoint
-    // unwound_model <- unwind initial k with initial states Q^0(s0)
-    // I(s1) <- split formula into partitions (A,B) and compute interpolant I(s1)
-    // I(s0) <- rename variables in I(s1) to I(s0)
-    // Q^{i+1}(s0) <- extend initial states (Q^i(s0) OR I(s0))
-    // if (I(s0) or Q^{i+1}(so)) => Q^{i+1}(s0) {
-    //      return FIXPOINT -- SAFE
-    // } else {
-    //      /* Restart BMC with initial states Q^{i+1}(s0) */
-    //      - from new initial states, unwind k times
-    //      - This means, we need to be able to initialize a BmcModel with the respective initial states
-    // }
+pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyCheck, ModelCheckingError> {
+    let mut interpolants: Vec<XCNF> = Vec::new();
+    let mut k = initial_bound;
 
-    // Single iteration of bounded model checking
-    let mut bmc = BmcModel::from_aig(graph)?;
-    bmc.unwind(initial_k)?;
+    // Q <- Compute exact initial states Q
+    // F <- Unroll transition relation k times
 
-    if bmc.check() == Conclusion::Ok {
-        let interpolant = bmc.compute_interpolant();
-        dbg!(interpolant);
+    loop {
+        // Q' <- Add all interpolants in I to initial states Q
+        // Seed BMC with initial states Q' and F from the transition relation unrolls
 
-        return Ok(Conclusion::Ok);
+        // These two lines are just a placeholder
+        let mut bmc = BmcModel::from_aig(graph)?;
+        bmc.unwind(initial_bound)?;
+
+        if bmc.check() == ModelConclusion::Safe {
+            let interpolant = bmc.compute_interpolant()
+                .ok_or(ModelCheckingError::FailedInterpolation(k, interpolants.len()))?;
+            dbg!(&interpolant);
+
+            // TODO Rename interpolant
+            // I(s0) <- Rename interpolant I(s1) to I(s0) (talk about states in time step t = 0)
+
+            // TODO Fixpoint Check
+            // if (I(s0) or Q') => Q') {
+            //     return Ok(PropertyCheck::Ok)
+            // }
+
+            interpolants.push(interpolant);
+        } else {
+            if interpolants.is_empty() {
+                return Ok(PropertyCheck::Fail);
+            }
+
+            k += 1;
+            interpolants.clear();
+        }
     }
-
-    Ok(Conclusion::Fail)
 }
 
 pub struct BmcModel<'a> {
@@ -153,16 +178,16 @@ impl BmcModel<'_> {
         Ok(())
     }
 
-    pub fn check(&mut self) -> Conclusion {
+    pub fn check(&mut self) -> ModelConclusion {
         // If the formula is SAT, the model's property was violated
         match self.solver.solve() {
             true => {
                 let model = self.solver.get_model();
-                // print_sat_model(self.graph, model.as_slice());
-                print_input_trace(self.graph, model.as_slice());
-                Conclusion::Fail
+                // debug::print_sat_model(self.graph, model.as_slice());
+                debug::print_input_trace(self.graph, model.as_slice());
+                ModelConclusion::CounterExample
             },
-            false => Conclusion::Ok
+            false => ModelConclusion::Safe
         }
     }
 
@@ -191,16 +216,13 @@ impl BmcModel<'_> {
 
             let pivot_partition = proof.var_partition(step.pivot)?;
             let I_resolvent: XCNF = match pivot_partition {
-                Partition::A => {
-                    // I_L OR I_R
+                Partition::A => {  // I_L OR I_R
                     self.solver.tseitin_or(I_L, I_R)
                 },
-                Partition::B => {
-                    // I_L AND I_R
+                Partition::B => {  // I_L AND I_R
                     self.solver.tseitin_and(I_L, I_R)
                 },
-                Partition::AB => {
-                    // (I_L OR x) AND (I_R OR ~x)
+                Partition::AB => { // (I_L OR x) AND (I_R OR ~x)
                     let x = step.pivot;
                     let left_conjunct = self.solver.tseitin_or(I_L, &XCNF::from(x));
                     let right_conjunct = self.solver.tseitin_or(I_R, &XCNF::from(-x));
@@ -209,13 +231,13 @@ impl BmcModel<'_> {
                 }
             };
 
-            println!(
-                "I_L: {:?},\n\
-                I_R: {:?},\n\
-                -- Resolving on literal {:} (partition: {:?})\n\
-                => {:?}\n",
-                &I_L, &I_R, &step.pivot, &pivot_partition, &I_resolvent
-            );
+            // println!(
+            //     "I_L: {:?},\n\
+            //     I_R: {:?},\n\
+            //     -- Resolving on literal {:} (partition: {:?})\n\
+            //     => {:?}\n",
+            //     &I_L, &I_R, &step.pivot, &pivot_partition, &I_resolvent
+            // );
 
             interpolants.insert(step.resolvent, I_resolvent);
             last = step.resolvent;
@@ -252,72 +274,4 @@ impl BmcModel<'_> {
 
         Ok(())
     }
-}
-
-fn print_sat_model(graph: &AIG, model: &[i8]) {
-    let num_i = graph.inputs.len();
-    let num_l = graph.latches.len();
-    let num_a = graph.and_gates.len();
-    let frame_size = num_i + num_l + num_a;
-
-    println!("#--- SAT Model Assignment (True Variables) ---");
-
-    for (idx, &val) in model.iter().enumerate().skip(VAR_OFFSET) {
-        // Only print variables that were set to true
-        if val != 1 {
-            continue;
-        }
-
-        let normalized = idx - VAR_OFFSET;
-        let t = normalized / frame_size; // Time step
-        let f = normalized % frame_size; // Offset in frame
-
-        // Determine the semantic meaning of the variable within the current frame
-        let (label, local_idx) = if f < num_i {
-            ("Input", f)
-        } else if f < num_i + num_l {
-            ("Latch", f - num_i)
-        } else {
-            ("AND", f - (num_i + num_l))
-        };
-
-        println!("{:>4}: {}_{}@{}", idx, label, local_idx, t);
-    }
-    println!("--------------------------------------------");
-}
-
-fn print_input_trace(graph: &AIG, model: &[i8]) {
-    let num_i = graph.inputs.len();
-
-    // The first variable is the constant bottom
-    let total_vars = model.len().saturating_sub(1);
-    let vars_per_frame = graph.variables().count();
-    let num_steps = total_vars / vars_per_frame;
-
-    // Header
-    println!("\n=== Input Trace (Counter-Example) ===");
-    print!("{:>4} | ", "t");
-    for i in 0..num_i {
-        print!("In_{:<2} ", i);
-    }
-    println!("\n{:-<5}+{:-<}", "", "-".repeat(num_i * 5));
-
-    for k in 0..num_steps {
-        print!("{:>4} | ", k);
-        for i in 0..num_i {
-            // Use frame_size derived from variables().len()
-            let idx = VAR_OFFSET + (k * vars_per_frame) + i;
-            if let Some(&val) = model.get(idx) {
-                let display = match val {
-                    1  => " T  ", // True
-                    -1 => " F  ", // False
-                    0  => " x  ", // Undefined
-                    _  => " !  ", // Should not happen
-                };
-                print!("{}", display);
-            }
-        }
-        println!();
-    }
-    println!("=====================================\n");
 }
