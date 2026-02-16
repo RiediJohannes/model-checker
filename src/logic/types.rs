@@ -183,6 +183,18 @@ impl BitAnd<&CNF> for &CNF {
     }
 }
 
+impl CNF {
+    pub fn shift_literals(&mut self, id_range: std::ops::RangeInclusive<i32>, shift: i32) {
+        for clause in self.clauses.iter_mut() {
+            for lit in clause.lits.iter_mut() {
+                if id_range.contains(&lit.var()) {
+                    lit.shift_var(shift);
+                }
+            }
+        }
+    }
+}
+
 #[macro_export]
 macro_rules! cnf {
     ( $( [ $( $lit:expr ),* ] ),* ) => {
@@ -206,6 +218,14 @@ impl XCNF {
         Self {
             formula: clauses,
             out_lit: output_literal
+        }
+    }
+
+    pub fn shift_literals(&mut self, id_range: std::ops::RangeInclusive<i32>, shift: i32) {
+        self.formula.shift_literals(id_range.clone(), shift);
+
+        if id_range.contains(&self.out_lit.var()) {
+            self.out_lit.shift_var(shift);
         }
     }
 }

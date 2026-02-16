@@ -69,6 +69,12 @@ impl Literal {
     pub const fn unsign(&self) -> Literal {
         Literal { id: self.id & !1 }
     }
+
+    pub fn shift_var(&mut self, shift: i32) {
+        let sign_bit = self.id & 1;
+        let shifted_var = self.var() + shift;
+        self.id = (shifted_var << 1) | sign_bit;
+    }
 }
 impl Neg for Literal {
     type Output = Self;

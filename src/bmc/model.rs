@@ -71,19 +71,21 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
         bmc.unwind(k)?;
 
         if bmc.check() == ModelConclusion::Safe {
-            let interpolant = bmc.compute_interpolant()
+            let itp_s1 = bmc.compute_interpolant()
                 .ok_or(ModelCheckingError::FailedInterpolation(k, interpolants.len()))?;
-            dbg!(&interpolant);
 
-            // TODO Rename interpolant
+            dbg!(&itp_s1);
+
             // I(s0) <- Rename interpolant I(s1) to I(s0) (talk about states in time step t = 0)
+            let itp_s0 = bmc.rename_interpolant(itp_s1);
+            dbg!(&itp_s0);
 
             // TODO Fixpoint Check
             // if (I(s0) or Q') => Q') {
             //     return Ok(PropertyCheck::Ok)
             // }
 
-            interpolants.push(interpolant);
+            interpolants.push(itp_s0);
             return Ok(PropertyCheck::Ok);  // TODO Remove this line
         } else {
             if interpolants.is_empty() {
@@ -91,6 +93,7 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
             }
 
             k += 1;
+            bmc = BmcModel::from_aig(graph, k)?;
             interpolants.clear();
         }
     }
@@ -114,11 +117,12 @@ impl BmcModel<'_> {
             solver: Solver::new()
         };
 
-        // Initialize variables for all signals at time steps 0..k
+        // Initialize variables for all signals at time steps 0..=k
         for t in 0..=k {
             model.add_step();
             for var in graph.variables() {
-                model.signal_at_time(&Signal::Var(var), t)?;
+                let _lit = model.signal_at_time(&Signal::Var(var), t)?;
+                println!("Lit {} = AigVar {}@{}", _lit.var(), 2*var.idx(), t);
             }
         }
 
@@ -174,6 +178,10 @@ impl BmcModel<'_> {
         self.solver.add_clause(property_violation_clause);
 
         Ok(())
+    }
+
+    pub fn add_interpolant(&mut self, _interpolant: &XCNF) {
+        // TODO Add interpolant to the current solver clauses, ideally in an incremental manner
     }
 
     /// Check the property encoded by the current state of the [BmcModel].
@@ -255,6 +263,15 @@ impl BmcModel<'_> {
         let final_interpolant = interpolants.remove(&last)?;
         // let final_interpolant = interpolants.get(&last)?.clone();
         Some(final_interpolant)
+    }
+
+    /// Given an extended CNF interpolant over the state at time step `t = 1`, selectively renames
+    /// its literals such that the interpolant talks about the state at `t = 0` instead.
+    pub fn rename_interpolant(&self, mut interpolant: XCNF) -> XCNF {
+        let m = self.graph.max_idx as i32;
+        interpolant.shift_literals((m+1)..=(2*m), -m);
+
+        interpolant
     }
 
     /* --- Private methods --- */
