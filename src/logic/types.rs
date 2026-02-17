@@ -60,6 +60,12 @@ impl PartialEq<Clause> for Clause {
             && self.lits.iter().all(|l| other.lits.contains(l))
     }
 }
+
+impl AsRef<[Literal]> for Clause {
+    fn as_ref(&self) -> &[Literal] {
+        &self.lits
+    }
+}
 impl<'a> IntoIterator for &'a Clause {
     type Item = Literal;
     type IntoIter = std::iter::Copied<std::slice::Iter<'a, Literal>>;

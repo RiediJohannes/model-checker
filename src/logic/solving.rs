@@ -98,7 +98,7 @@ impl Display for Literal {
 }
 impl From<i32> for Literal {
     fn from(i: i32) -> Self {
-        Literal { id: i }
+        Literal::raw(i)
     }
 }
 
@@ -107,6 +107,7 @@ impl From<i32> for Literal {
 /// methods for logic formula transformations.
 pub struct Solver {
     stub: UniquePtr<SolverStub>,
+    pub top_var: i32,   // ID of the highest variable instantiated so far
     pub resolution: Option<Box<ResolutionProof>>,  // IMPORTANT to box this member, otherwise passing its reference to C++ will lead to memory-issues!
 }
 
@@ -116,6 +117,7 @@ impl Solver {
 
         let mut solver = Self {
             stub: ffi::newSolver(&mut resolution),
+            top_var: -1,
             resolution: Some(resolution),
         };
 
@@ -130,6 +132,7 @@ impl Solver {
     }
 
     pub fn add_var(&mut self) -> Literal {
+        self.top_var += 1;
         self.remote().newVar()
     }
 
@@ -246,7 +249,7 @@ mod tests {
         }
     }
 
-    fn setup_interpolants() -> (Solver, XCNF, XCNF, usize) {
+    fn setup_interpolants() -> (Solver, XCNF, XCNF) {
         const N_VARS: usize = 4;
         let mut solver = Solver::new();
         let vars = solver.add_vars(N_VARS);
@@ -255,9 +258,36 @@ mod tests {
         let I1 = XCNF::new(cnf![[-z1, x], [-z1, y], [z1, -x, -y]], z1);
         let I2 = XCNF::new(cnf![[z2, -x], [z2, -y], [-z2, x, y]], z2);
 
-        let id_counter = VAR_OFFSET - 1 + N_VARS;
-        assert_eq!(z2.var() as usize, id_counter);
-        (solver, I1, I2, id_counter)
+        assert_eq!(z2.var() as usize, VAR_OFFSET - 1 + N_VARS);
+        (solver, I1, I2)
+    }
+
+    /// Check if the public `top_var` counter of the solver accurately tracks the highest variable ID
+    /// currently instantiated in the solver.
+    #[test]
+    fn top_var_counter() {
+        let mut solver: Solver = Solver::new();
+
+        assert_eq!(solver.top_var, 0);
+        assert_eq!(solver.top_var, FALSE.var());
+
+        let x1 = solver.add_var();
+        assert_eq!(solver.top_var, 1);
+        assert_eq!(solver.top_var, x1.var());
+        assert_eq!(x1.var(), VAR_OFFSET as i32);
+
+        let new_vars = solver.add_vars(9);
+        assert_eq!(solver.top_var, 10);
+        assert_eq!(solver.top_var, new_vars.last().unwrap().var());
+
+        // Clauses do not change the var counter
+        solver.add_clause([x1, -new_vars[1]]);
+        solver.add_clause([-new_vars[7]]);
+        assert_eq!(solver.top_var, 10);
+
+        let x11 = solver.add_var();
+        assert_eq!(solver.top_var, 11);
+        assert_eq!(solver.top_var, x11.var());
     }
 
     #[test]
@@ -342,8 +372,7 @@ mod tests {
         assert_eq!(&F_or_F, &F);
 
         // Assert that we did not need any auxiliary tseitin variables for these cases
-        let x_next = solver.add_var();
-        assert_eq!(x_next.var(), VAR_OFFSET as i32);
+        assert_eq!(solver.top_var, 0);
     }
 
     #[test]
@@ -351,7 +380,8 @@ mod tests {
         let T = XCNF::from(TRUE);
         let F = XCNF::from(FALSE);
 
-        let (mut solver, I1, I2, mut id_counter) = setup_interpolants();
+        let (mut solver, I1, I2) = setup_interpolants();
+        let initial_top = solver.top_var;
 
         // Case 1: I or TRUE
         let I1_or_T = solver.tseitin_or(&I1, &T);
@@ -366,19 +396,17 @@ mod tests {
         assert_eq!(&I2_or_F, &I2);
 
         // Assert that we did not need any additional tseitin variables for these cases
-        let x_next = solver.add_var(); id_counter += 1;
-        assert_eq!(x_next.var() as usize, id_counter);
+        assert_eq!(solver.top_var, initial_top);
 
         // Case 3: I1 or I2
         let I1_or_I2 = solver.tseitin_or(&I1, &I2);
-        id_counter += 1;  // this time, the tseitin transformation needs an auxiliary variable
         assert!(I1_or_I2.contains_all(&I1.formula.clauses));
         assert!(I1_or_I2.contains_all(&I2.formula.clauses));
 
         // Check if the tseitin clauses and variable were added correctly
         assert_eq!(I1_or_I2.formula.len(), I1.formula.len() + I2.formula.len() + 3);
         // The now top variable should have become the output literal
-        let t = Literal::from_var(id_counter as i32);
+        let t = Literal::from_var(solver.top_var);
         assert_eq!(I1_or_I2.out_lit, t);
 
         let tseitin_clauses = vec![
@@ -389,8 +417,7 @@ mod tests {
         assert!(I1_or_I2.contains_all(&tseitin_clauses));
 
         // Check: We needed exactly one additional variable, no more
-        let x_next = solver.add_var(); id_counter += 1;
-        assert_eq!(x_next.var() as usize, id_counter);
+        assert_eq!(solver.top_var, initial_top + 1);
     }
 
     #[test]
@@ -414,8 +441,7 @@ mod tests {
         assert_eq!(&F_and_F, &F);
 
         // Assert that we did not need any auxiliary tseitin variables for these cases
-        let x_next = solver.add_var();
-        assert_eq!(x_next.var(), VAR_OFFSET as i32);
+        assert_eq!(solver.top_var, 0);
     }
 
     #[test]
@@ -423,7 +449,8 @@ mod tests {
         let T = XCNF::from(TRUE);
         let F = XCNF::from(FALSE);
 
-        let (mut solver, I1, I2, mut id_counter) = setup_interpolants();
+        let (mut solver, I1, I2) = setup_interpolants();
+        let initial_top = solver.top_var;
 
         // Case 1: I or TRUE
         let I1_and_T = solver.tseitin_and(&I1, &T);
@@ -438,19 +465,17 @@ mod tests {
         assert_eq!(&I2_and_F, &F);
 
         // Assert that we did not need any additional tseitin variables for these cases
-        let x_next = solver.add_var(); id_counter += 1;
-        assert_eq!(x_next.var() as usize, id_counter);
+        assert_eq!(solver.top_var, initial_top);
 
         // Case 3: I1 or I2
         let I1_and_I2 = solver.tseitin_and(&I1, &I2);
-        id_counter += 1;  // this time, the tseitin transformation needs an auxiliary variable
         assert!(I1_and_I2.contains_all(&I1.formula.clauses));
         assert!(I1_and_I2.contains_all(&I2.formula.clauses));
 
         // Check if the tseitin clauses and variable were added correctly
         assert_eq!(I1_and_I2.formula.len(), I1.formula.len() + I2.formula.len() + 3);
         // The now top variable should have become the output literal
-        let t = Literal::from_var(id_counter as i32);
+        let t = Literal::from_var(solver.top_var);
         assert_eq!(I1_and_I2.out_lit, t);
 
         let tseitin_clauses = vec![
@@ -461,7 +486,6 @@ mod tests {
         assert!(I1_and_I2.contains_all(&tseitin_clauses));
 
         // Check: We needed exactly one additional variable, no more
-        let x_next = solver.add_var(); id_counter += 1;
-        assert_eq!(x_next.var() as usize, id_counter);
+        assert_eq!(solver.top_var, initial_top + 1);
     }
 }
