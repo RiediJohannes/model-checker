@@ -7,7 +7,7 @@ use crate::logic::{Clause, Literal, FALSE, TRUE, XCNF};
 use std::collections::HashMap;
 use std::ops::Deref;
 use thiserror::Error;
-
+use crate::cnf;
 
 #[derive(Error, Debug)]
 pub enum ModelCheckingError {
@@ -80,10 +80,11 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
             let itp_s0 = bmc.rename_interpolant(itp_s1);
             dbg!(&itp_s0);
 
-            // TODO Fixpoint Check
-            // if (I(s0) or Q') => Q') {
-            //     return Ok(PropertyCheck::Ok)
-            // }
+            // Fixpoint Check
+            dbg!(bmc.is_fixpoint(&itp_s0));
+            if bmc.is_fixpoint(&itp_s0) {
+                return Ok(PropertyCheck::Ok)
+            }
 
             interpolants.push(itp_s0);
             return Ok(PropertyCheck::Ok);  // TODO Remove this line
@@ -93,7 +94,7 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
             }
 
             k += 1;
-            bmc = BmcModel::from_aig(graph, k)?;
+            // bmc = BmcModel::from_aig(graph, k)?;
             interpolants.clear();
         }
     }
@@ -201,7 +202,8 @@ impl BmcModel<'_> {
         }
     }
 
-    /// Computes an interpolant for the two inconsistent partitions `(A, B)` of clauses in the [BmcModel].
+    /// Computes an interpolant for the two inconsistent partitions `(A, B)` of clauses in the [BmcModel]
+    /// according to the Huang-Krajíček-Pudlák interpolation system.
     /// The resulting interpolant will over-approximate the states that satisfy the clauses in [Partition::A].
     #[allow(non_snake_case)]
     pub fn compute_interpolant(&mut self) -> Option<XCNF> {
@@ -274,6 +276,43 @@ impl BmcModel<'_> {
         interpolant
     }
 
+    pub fn is_fixpoint(&self, interpolant: &XCNF) -> bool {
+        // Clean new solver for the fixpoint check
+        let mut fp_solver = Solver::new();
+        for _ in 1..=self.solver.top_var { fp_solver.add_var(); }
+
+        // Placeholder Q
+        let mut q = interpolant.clone();
+        q.formula.clauses.remove(0);
+        q.formula.clauses.remove(0);
+
+        let a = Literal::from_var(33);
+        let b = fp_solver.add_var();
+        let q = XCNF::new(cnf!([a], [-a, b], [-b, a]), b);
+
+        // TODO Check if I(s0) or Q') => Q'
+        // (I or Q) => Q
+        // ~(I or Q) or Q
+        // (~I and ~Q) or Q
+
+        // ~[(I or Q) => Q]
+        // ~[~(I or Q) or Q]
+        // (I or Q) and ~Q
+        for clause in interpolant.formula.clauses.iter() {
+            fp_solver.add_clause(clause);
+        }
+        for clause in q.formula.clauses.iter() {
+            fp_solver.add_clause(clause);
+        }
+
+        fp_solver.add_clause([-q.out_lit]);
+        fp_solver.add_clause([q.out_lit, interpolant.out_lit]);
+
+        let negation_is_sat = fp_solver.solve();
+        !negation_is_sat
+    }
+
+
     /* --- Private methods --- */
 
     /// Explicitly adds a new time step to the model. [Literal]s for [Signal]s can only be instantiated
@@ -321,5 +360,146 @@ impl BmcModel<'_> {
         self.solver.add_clause([-curr, prev]);
 
         Ok(())
+    }
+}
+
+
+// ================= Unit Tests ================
+#[cfg(test)]
+#[allow(non_snake_case)]
+mod tests {
+    use std::collections::HashSet;
+    use crate::logic::CNF;
+    use super::*;
+
+    impl Default for AIG {
+        fn default() -> Self {
+            // Obtain a dummy AIG object needed for construction of a BmcModel
+            AIG {
+                max_idx: 1,
+                inputs: Vec::new(),
+                latches: Vec::new(),
+                outputs: Vec::new(),
+                and_gates: Vec::new(),
+            }
+        }
+    }
+    impl BmcModel<'_> {
+        fn dummy(graph: &'_ AIG) -> BmcModel<'_> {
+            BmcModel {
+                graph,
+                time_steps: Vec::new(),
+                solver: Solver::new()
+            }
+        }
+    }
+
+    fn vars_in_cnf(cnf: &CNF) -> HashSet<i32> {
+        let mut vars = HashSet::new();
+        for clause in cnf {
+            for lit in clause {
+                vars.insert(lit.var());
+            }
+        }
+        vars
+    }
+
+    /// Verifies that the interpolant `I` satisfies the following properties w.r.t. the clause partition `(A, B)`:
+    /// - A => I
+    /// - B => ~I
+    /// - I only contains variables shared between A and B
+    fn verify_interpolant_properties(interpolant: &XCNF, A_cnf: CNF, B_cnf: CNF, top_var: i32) {
+        // Property 1: A => I, or equivalently (A and ~I) is UNSAT
+        let mut solver_a = Solver::new();
+        for _ in 1..=top_var { solver_a.add_var(); }
+
+        for clause in &A_cnf { solver_a.add_clause(clause); }
+        for clause in &interpolant.formula.clauses { solver_a.add_clause(clause); }
+        solver_a.add_clause([-interpolant.out_lit]);
+        assert!(!solver_a.solve(), "Property A => I failed: A and ~I is SAT!");
+
+        // Property 2: B => ~I, or equivalently (I and B) is UNSAT
+        let mut solver_b = Solver::new();
+        for _ in 1..=top_var { solver_b.add_var(); }
+
+        for clause in &B_cnf { solver_b.add_clause(clause); }
+        for clause in &interpolant.formula.clauses { solver_b.add_clause(clause); }
+        solver_b.add_clause([interpolant.out_lit]);
+        assert!(!solver_b.solve(), "Property B => ~I failed: I and B is SAT!");
+
+        // Property 3: Interpolant I only contains variables shared between A and B
+        let A_vars = vars_in_cnf(&A_cnf);
+        let B_vars = vars_in_cnf(&B_cnf);
+        let I_vars = vars_in_cnf(&interpolant.formula);
+
+        // Obtain all variables local to some partition (either A or B)
+        let local_vars = A_vars.symmetric_difference(&B_vars).cloned().collect();
+        assert!(I_vars.is_disjoint(&local_vars), "Interpolant I contained some variables local to either partition A or B!");
+    }
+
+    #[test]
+    fn test_interpolant_basic_identity() {
+        let dummy_aig = AIG::default();
+        let mut bmc = BmcModel::dummy(&dummy_aig);
+
+        let x = bmc.solver.add_var();
+
+        bmc.solver.set_partition(Partition::A);
+        let clauses_a = cnf!([x]);
+        bmc.solver.add_clause(&clauses_a[0]);
+
+        bmc.solver.set_partition(Partition::B);
+        let clauses_b = cnf!([-x]);
+        bmc.solver.add_clause(&clauses_b[0]);
+
+        assert!(!bmc.solver.solve(), "Can only compute an interpolant if the partitions (A, B) are inconsistent");
+
+        let itp = bmc.compute_interpolant().expect("Failed to compute interpolant");
+        verify_interpolant_properties(&itp, clauses_a, clauses_b, bmc.solver.top_var);
+    }
+
+    #[test]
+    fn test_interpolant_transitive_chain() {
+        let dummy_aig = AIG::default();
+        let mut bmc = BmcModel::dummy(&dummy_aig);
+
+        let a = bmc.solver.add_var(); // Local to A
+        let b = bmc.solver.add_var(); // Shared
+        let c = bmc.solver.add_var(); // Local to B
+
+        bmc.solver.set_partition(Partition::A);
+        let clauses_a = cnf!([a], [-a, b]);
+        for c in &clauses_a { bmc.solver.add_clause(c); }
+
+        bmc.solver.set_partition(Partition::B);
+        let clauses_b = cnf!([-b, c], [-c]);
+        for c in &clauses_b { bmc.solver.add_clause(c); }
+
+        assert!(!bmc.solver.solve(), "Can only compute an interpolant if the partitions (A, B) are inconsistent");
+
+        let itp = bmc.compute_interpolant().expect("Failed to compute interpolant");
+        verify_interpolant_properties(&itp, clauses_a, clauses_b, bmc.solver.top_var);
+    }
+
+    #[test]
+    fn test_interpolant_disjunction() {
+        let dummy_aig = AIG::default();
+        let mut bmc = BmcModel::dummy(&dummy_aig);
+
+        let x = bmc.solver.add_var();
+        let y = bmc.solver.add_var();
+
+        bmc.solver.set_partition(Partition::A);
+        let clauses_a = cnf!([x, y]);
+        bmc.solver.add_clause(&clauses_a[0]);
+
+        bmc.solver.set_partition(Partition::B);
+        let clauses_b = cnf!([-x], [-y]);
+        for c in &clauses_b { bmc.solver.add_clause(c); }
+
+        assert!(!bmc.solver.solve(), "Can only compute an interpolant if the partitions (A, B) are inconsistent");
+
+        let itp = bmc.compute_interpolant().expect("Failed to compute interpolant");
+        verify_interpolant_properties(&itp, clauses_a, clauses_b, bmc.solver.top_var);
     }
 }
