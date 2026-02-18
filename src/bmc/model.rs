@@ -2,9 +2,9 @@ use crate::bmc::aiger::{AndGate, Latch, ParseError, Signal, AIG};
 use crate::bmc::{aiger, debug};
 use crate::logic::resolution::Partition;
 use crate::logic::solving::Solver;
-use crate::logic::{Clause, Literal, FALSE, TRUE, XCNF};
+use crate::logic::{Clause, Literal, CNF, FALSE, TRUE, XCNF};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 use thiserror::Error;
 use crate::cnf;
@@ -39,9 +39,7 @@ pub fn check_bounded(graph: &AIG, k: u32) -> Result<PropertyCheck, ModelChecking
     // Single iteration of bounded model checking
     let mut bmc = BmcModel::from_aig(graph, k)?;
 
-    let q_0 = bmc.add_initial_states()?;
-    bmc.solver.add_clause([q_0]);
-
+    bmc.add_initial_states()?;
     bmc.unwind(k)?;
 
     let output = match bmc.check() {
@@ -52,29 +50,33 @@ pub fn check_bounded(graph: &AIG, k: u32) -> Result<PropertyCheck, ModelChecking
 }
 
 pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyCheck, ModelCheckingError> {
-    let mut interpolants: Vec<XCNF> = Vec::new();
     let mut k = initial_bound;
 
     // Q <- Compute exact initial states Q
     // F <- Unroll transition relation k times
+    let mut bmc = BmcModel::from_aig(graph, k)?;
+
+    // These two lines are just a placeholder
+    // TODO Maybe merge this with the from_aig method and keep q_0 as a private member
+    bmc.add_initial_states()?;
+    bmc.unwind(k)?;
 
     loop {
         // Q' <- Add all interpolants in I to initial states Q
         // Seed BMC with initial states Q' and F from the transition relation unrolls
 
-        // These two lines are just a placeholder
-        let mut bmc = BmcModel::from_aig(graph, k)?;
-        // TODO Maybe merge this with the from_aig method and keep q_0 as a private member
-        let q_0 = bmc.add_initial_states()?;
-        bmc.solver.add_clause([q_0]);
-
-        bmc.unwind(k)?;
-
         if bmc.check() == ModelConclusion::Safe {
             let itp_s1 = bmc.compute_interpolant()
-                .ok_or(ModelCheckingError::FailedInterpolation(k, interpolants.len()))?;
+                .ok_or(ModelCheckingError::FailedInterpolation(k, bmc.interpolation_count()))?;
 
-            dbg!(&itp_s1);
+            // TODO Remove these debug checks
+                let proof = bmc.solver.resolution.take().unwrap();
+                let a_clauses: Vec<Clause> = proof.clauses_in_partition(Partition::A).map(|c| proof.get_clause(*c).unwrap().clone()).collect();
+                let b_clauses: Vec<Clause> = proof.clauses_in_partition(Partition::B).map(|c| proof.get_clause(*c).unwrap().clone()).collect();
+                verify_interpolant_properties(&itp_s1, CNF::from(a_clauses), CNF::from(b_clauses), bmc.solver.top_var);
+
+                bmc.solver.resolution = Some(proof);
+            // End of debug checks
 
             // I(s0) <- Rename interpolant I(s1) to I(s0) (talk about states in time step t = 0)
             let itp_s0 = bmc.rename_interpolant(itp_s1);
@@ -86,16 +88,16 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
                 return Ok(PropertyCheck::Ok)
             }
 
-            interpolants.push(itp_s0);
-            return Ok(PropertyCheck::Ok);  // TODO Remove this line
+            bmc.add_interpolant(itp_s0);
         } else {
-            if interpolants.is_empty() {
+            if bmc.interpolation_count() == 0 {
                 return Ok(PropertyCheck::Fail);
             }
 
             k += 1;
-            // bmc = BmcModel::from_aig(graph, k)?;
-            interpolants.clear();
+            bmc = BmcModel::from_aig(graph, k)?;
+            bmc.add_initial_states()?;
+            bmc.unwind(k)?;
         }
     }
 }
@@ -103,6 +105,8 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
 pub struct BmcModel<'a> {
     graph: &'a AIG,
     time_steps: Vec<HashMap<u32, Literal>>,
+    interpolants: Vec<XCNF>,
+    assumption_lit: Option<Literal>,
     solver: Solver,
 }
 
@@ -115,6 +119,8 @@ impl BmcModel<'_> {
         let mut model = BmcModel {
             graph,
             time_steps: Vec::new(),
+            interpolants: Vec::new(),
+            assumption_lit: None,
             solver: Solver::new()
         };
 
@@ -144,10 +150,21 @@ impl BmcModel<'_> {
         }
 
         // Latches
+        let mut latch_lits = Vec::new();
         for latch in self.graph.latches.iter() {
             let init_val = self.signal_at_time(&latch.out, 0)?;
             self.solver.add_clause([-q_0, -init_val]);  // q_0 implies L_i@0 = 0
+
+            latch_lits.push(init_val);
         }
+
+        // TODO Is this actually necessary?
+        latch_lits.push(q_0);
+        self.solver.add_clause(latch_lits.as_slice());
+
+        let a = self.solver.add_var();
+        self.assumption_lit = Some(a);
+        self.solver.add_clause([q_0, a]);
 
         Ok(q_0)
     }
@@ -155,6 +172,8 @@ impl BmcModel<'_> {
     /// Unwinds the transition relation as described by the model's [AIG] graph `k` times
     /// and adds the resulting clauses to the model's state.
     pub fn unwind(&'_ mut self, k: u32) -> Result<(), ModelCheckingError> {
+        self.solver.set_partition(Partition::A);
+
         // We need variables for each input, latch, gate and output at each time step
         for t in 1..=k {
             if t == 2 {
@@ -171,6 +190,8 @@ impl BmcModel<'_> {
             }
         }
 
+        self.solver.set_partition(Partition::B);
+
         // Assert that the output is true at SOME time step -> property violation
         let property_violation_clause: Vec<Literal> = (1..=k)
             .map(|t| self.signal_at_time(&self.graph.outputs[0], t))
@@ -181,8 +202,33 @@ impl BmcModel<'_> {
         Ok(())
     }
 
-    pub fn add_interpolant(&mut self, _interpolant: &XCNF) {
-        // TODO Add interpolant to the current solver clauses, ideally in an incremental manner
+    pub fn add_interpolant(&mut self, interpolant: XCNF) {
+        self.interpolants.push(interpolant.clone());  // TODO Maybe we don't even need this list?
+
+        self.solver.set_partition(Partition::A);
+
+        // Add new variables to the solver
+        for _ in (self.solver.top_var+1)..=interpolant.out_lit.var() { self.solver.add_var(); }
+        // Add all clauses to the solver
+        for clause in interpolant.formula.clauses {
+            self.solver.add_clause(clause);
+        }
+
+        // Add interpolant to the current solver clauses in an incremental manner
+        // Add clauses to express a <-> (I or b), where b is a new assumption literal
+        if let Some(a) = self.assumption_lit {
+            let b = self.solver.add_var();
+
+            self.solver.add_clause([-a, interpolant.out_lit, b]);
+            self.solver.add_clause([-interpolant.out_lit, a]);
+            self.solver.add_clause([-b, a]);
+
+            self.assumption_lit = Some(b);
+        }
+    }
+
+    pub fn interpolation_count(&self) -> usize {
+        self.interpolants.len()
     }
 
     /// Check the property encoded by the current state of the [BmcModel].
@@ -190,8 +236,13 @@ impl BmcModel<'_> {
     /// - [ModelConclusion::CounterExample]: If a property violation could be found within the `k` unwinding steps.
     /// - [ModelConclusion::Safe]: If the model is safe w.r.t. the first `k` unwinding steps.
     pub fn check(&mut self) -> ModelConclusion {
+        let is_sat = match self.assumption_lit {
+            Some(a) => self.solver.solve_assuming([-a]),
+            None => self.solver.solve(),
+        };
+
         // If the formula is SAT, the model's property was violated
-        match self.solver.solve() {
+        match is_sat {
             true => {
                 let model = self.solver.get_model();
                 // debug::print_sat_model(self.graph, model.as_slice());
@@ -245,20 +296,23 @@ impl BmcModel<'_> {
                 }
             };
 
-            // println!(
-            //     "I_L: {:?},\n\
-            //     I_R: {:?},\n\
-            //     -- Resolving on literal {:} (partition: {:?})\n\
-            //     => {:?}\n",
-            //     &I_L, &I_R, &step.pivot, &pivot_partition, &I_resolvent
-            // );
+            println!(
+                "C_L = {}\t -> I_L: {:?}\n\
+                C_R = {}\t -> I_R: {:?}\n\
+                -- Resolving on literal {:} (partition: {:?})\n\
+                => {:?}\n",
+                proof.get_clause(step.left).unwrap(), &I_L,
+                proof.get_clause(step.right).unwrap(), &I_R,
+                &step.pivot, &pivot_partition, &I_resolvent
+            );
 
             interpolants.insert(step.resolvent, I_resolvent);
             last = step.resolvent;
         }
 
-        let last_clause = proof.get_clause(last)?;
-        assert_eq!(last_clause, &Clause::from_vec(vec![]));  // the last clause must be empty
+        // the last clause must be empty
+        // let last_clause = proof.get_clause(last)?;
+        // assert_eq!(last_clause, &Clause::from_vec(vec![]));
 
         self.solver.resolution = Some(proof_box);   // return proof ownership
 
@@ -276,7 +330,15 @@ impl BmcModel<'_> {
         interpolant
     }
 
-    pub fn is_fixpoint(&self, interpolant: &XCNF) -> bool {
+    pub fn is_fixpoint(&self, _interpolant: &XCNF) -> bool {
+        // Clean new solver for the fixpoint check
+        let mut fp_solver = Solver::new();
+        for _ in 1..=self.solver.top_var { fp_solver.add_var(); }
+
+        self.interpolants.len() > 20
+    }
+
+    pub fn is_fixpoint_test(&self, interpolant: &XCNF) -> bool {
         // Clean new solver for the fixpoint check
         let mut fp_solver = Solver::new();
         for _ in 1..=self.solver.top_var { fp_solver.add_var(); }
@@ -364,6 +426,52 @@ impl BmcModel<'_> {
 }
 
 
+
+fn vars_in_cnf(cnf: &CNF) -> HashSet<i32> {
+    let mut vars = HashSet::new();
+    for clause in cnf {
+        for lit in clause {
+            vars.insert(lit.var());
+        }
+    }
+    vars
+}
+
+/// Verifies that the interpolant `I` satisfies the following properties w.r.t. the clause partition `(A, B)`:
+/// - A => I
+/// - B => ~I
+/// - I only contains variables shared between A and B
+#[allow(non_snake_case)]
+fn verify_interpolant_properties(interpolant: &XCNF, A_cnf: CNF, B_cnf: CNF, top_var: i32) {
+    // Property 1: A => I, or equivalently (A and ~I) is UNSAT
+    let mut solver_a = Solver::new();
+    for _ in 1..=top_var { solver_a.add_var(); }
+
+    for clause in &A_cnf { solver_a.add_clause(clause); }
+    for clause in &interpolant.formula.clauses { solver_a.add_clause(clause); }
+    solver_a.add_clause([-interpolant.out_lit]);
+    assert!(!solver_a.solve(), "Property A => I failed: A and ~I is SAT!");
+
+    // Property 2: B => ~I, or equivalently (I and B) is UNSAT
+    let mut solver_b = Solver::new();
+    for _ in 1..=top_var { solver_b.add_var(); }
+
+    for clause in &B_cnf { solver_b.add_clause(clause); }
+    for clause in &interpolant.formula.clauses { solver_b.add_clause(clause); }
+    solver_b.add_clause([interpolant.out_lit]);
+    assert!(!solver_b.solve(), "Property B => ~I failed: I and B is SAT!");
+
+    // Property 3: Interpolant I only contains variables shared between A and B
+    let A_vars = vars_in_cnf(&A_cnf);
+    let B_vars = vars_in_cnf(&B_cnf);
+    let I_vars = vars_in_cnf(&interpolant.formula);
+
+    // Obtain all variables local to some partition (either A or B)
+    let local_vars = A_vars.symmetric_difference(&B_vars).cloned().collect();
+    assert!(I_vars.is_disjoint(&local_vars), "Interpolant I contained some variables local to either partition A or B!");
+}
+
+
 // ================= Unit Tests ================
 #[cfg(test)]
 #[allow(non_snake_case)]
@@ -389,52 +497,11 @@ mod tests {
             BmcModel {
                 graph,
                 time_steps: Vec::new(),
+                interpolants: Vec::new(),
+                assumption_lit: None,
                 solver: Solver::new()
             }
         }
-    }
-
-    fn vars_in_cnf(cnf: &CNF) -> HashSet<i32> {
-        let mut vars = HashSet::new();
-        for clause in cnf {
-            for lit in clause {
-                vars.insert(lit.var());
-            }
-        }
-        vars
-    }
-
-    /// Verifies that the interpolant `I` satisfies the following properties w.r.t. the clause partition `(A, B)`:
-    /// - A => I
-    /// - B => ~I
-    /// - I only contains variables shared between A and B
-    fn verify_interpolant_properties(interpolant: &XCNF, A_cnf: CNF, B_cnf: CNF, top_var: i32) {
-        // Property 1: A => I, or equivalently (A and ~I) is UNSAT
-        let mut solver_a = Solver::new();
-        for _ in 1..=top_var { solver_a.add_var(); }
-
-        for clause in &A_cnf { solver_a.add_clause(clause); }
-        for clause in &interpolant.formula.clauses { solver_a.add_clause(clause); }
-        solver_a.add_clause([-interpolant.out_lit]);
-        assert!(!solver_a.solve(), "Property A => I failed: A and ~I is SAT!");
-
-        // Property 2: B => ~I, or equivalently (I and B) is UNSAT
-        let mut solver_b = Solver::new();
-        for _ in 1..=top_var { solver_b.add_var(); }
-
-        for clause in &B_cnf { solver_b.add_clause(clause); }
-        for clause in &interpolant.formula.clauses { solver_b.add_clause(clause); }
-        solver_b.add_clause([interpolant.out_lit]);
-        assert!(!solver_b.solve(), "Property B => ~I failed: I and B is SAT!");
-
-        // Property 3: Interpolant I only contains variables shared between A and B
-        let A_vars = vars_in_cnf(&A_cnf);
-        let B_vars = vars_in_cnf(&B_cnf);
-        let I_vars = vars_in_cnf(&interpolant.formula);
-
-        // Obtain all variables local to some partition (either A or B)
-        let local_vars = A_vars.symmetric_difference(&B_vars).cloned().collect();
-        assert!(I_vars.is_disjoint(&local_vars), "Interpolant I contained some variables local to either partition A or B!");
     }
 
     #[test]

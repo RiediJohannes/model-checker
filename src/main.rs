@@ -21,7 +21,7 @@ struct Args {
 fn main() {
     let mut args = Args::parse();
 
-    let aiger_file = "data/count10.aag";  // args.file_path
+    let aiger_file = "data/safe.aag";  // args.file_path
     let k: u32 = 3; // args.k
     args.interpolate = true;
 
