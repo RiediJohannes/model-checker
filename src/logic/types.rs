@@ -83,7 +83,7 @@ impl BitAnd<&Clause> for &Clause {
 }
 
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct CNF {
     pub clauses: Vec<Clause>,
 }
@@ -237,14 +237,16 @@ impl XCNF {
 }
 impl PartialEq<Literal> for XCNF {
     fn eq(&self, lit: &Literal) -> bool {
-        self.formula.len() == 1
-            && self.formula[0].lits.len() == 1
-            && self.formula[0].lits[0] == *lit
+        (self.formula.len() == 0 && lit == &self.out_lit)
+            ||
+            (self.formula.len() == 1
+                && self.formula[0].lits.len() == 1
+                && self.formula[0].lits[0] == *lit)
     }
 }
 impl From<Literal> for XCNF {
     fn from(lit: Literal) -> Self {
-        Self::new(vec![Clause::new([lit])].into(), lit)
+        Self::new(CNF::default(), lit)
     }
 }
 impl Debug for XCNF {
@@ -290,16 +292,14 @@ mod tests {
     fn xcnf_from_unit() {
         let a = Literal::from_var(1);
         let xcnf = XCNF::from(a);
-        assert_eq!(xcnf.formula.len(), 1);
-        assert_eq!(xcnf.formula[0].lits.len(), 1);
-        assert_eq!(xcnf.formula[0].lits[0], a);
+        assert_eq!(xcnf.formula.len(), 0);
+        assert_eq!(xcnf.formula.clauses.len(), 0);
         assert_eq!(xcnf.out_lit, a);
 
         let b = Literal::from_var(2);
         let xcnf = XCNF::from(-b);
-        assert_eq!(xcnf.formula.len(), 1);
-        assert_eq!(xcnf.formula[0].lits.len(), 1);
-        assert_eq!(xcnf.formula[0].lits[0], -b);
+        assert_eq!(xcnf.formula.len(), 0);
+        assert_eq!(xcnf.formula.clauses.len(), 0);
         assert_eq!(xcnf.out_lit, -b);
     }
 

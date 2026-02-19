@@ -71,7 +71,9 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
 
             // TODO Remove these debug checks
                 let proof = bmc.solver.resolution.take().unwrap();
-                let a_clauses: Vec<Clause> = proof.clauses_in_partition(Partition::A).map(|c| proof.get_clause(*c).unwrap().clone()).collect();
+                // let a_clauses: Vec<Clause> = proof.clauses_in_partition(Partition::A).map(|c| proof.get_clause(*c).unwrap().clone()).collect();
+                let mut a_clauses: Vec<Clause> = proof.clauses_in_partition(Partition::A).map(|c| proof.get_clause(*c).unwrap().clone()).collect();
+                a_clauses.push(Clause::from(-bmc.assumption_lit.unwrap()));
                 let b_clauses: Vec<Clause> = proof.clauses_in_partition(Partition::B).map(|c| proof.get_clause(*c).unwrap().clone()).collect();
                 verify_interpolant_properties(&itp_s1, CNF::from(a_clauses), CNF::from(b_clauses), bmc.solver.top_var);
 
@@ -83,10 +85,10 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
             dbg!(&itp_s0);
 
             // Fixpoint Check
-            dbg!(bmc.is_fixpoint(&itp_s0));
-            if bmc.is_fixpoint(&itp_s0) {
-                return Ok(PropertyCheck::Ok)
-            }
+            // dbg!(bmc.is_fixpoint(&itp_s0));
+            // if bmc.is_fixpoint(&itp_s0) {
+            //     return Ok(PropertyCheck::Ok)
+            // }
 
             bmc.add_interpolant(itp_s0);
         } else {
@@ -129,7 +131,7 @@ impl BmcModel<'_> {
             model.add_step();
             for var in graph.variables() {
                 let _lit = model.signal_at_time(&Signal::Var(var), t)?;
-                println!("Lit {} = AigVar {}@{}", _lit.var(), 2*var.idx(), t);
+                // println!("Lit {} = AigVar {}@{}", _lit.var(), 2*var.idx(), t);
             }
         }
 
@@ -296,15 +298,15 @@ impl BmcModel<'_> {
                 }
             };
 
-            println!(
-                "C_L = {}\t -> I_L: {:?}\n\
-                C_R = {}\t -> I_R: {:?}\n\
-                -- Resolving on literal {:} (partition: {:?})\n\
-                => {:?}\n",
-                proof.get_clause(step.left).unwrap(), &I_L,
-                proof.get_clause(step.right).unwrap(), &I_R,
-                &step.pivot, &pivot_partition, &I_resolvent
-            );
+            // println!(
+            //     "C_L = {}\t -> I_L: {:?}\n\
+            //     C_R = {}\t -> I_R: {:?}\n\
+            //     -- Resolving on literal {:} (partition: {:?})\n\
+            //     => {:?}\n",
+            //     proof.get_clause(step.left).unwrap(), &I_L,
+            //     proof.get_clause(step.right).unwrap(), &I_R,
+            //     &step.pivot, &pivot_partition, &I_resolvent
+            // );
 
             interpolants.insert(step.resolvent, I_resolvent);
             last = step.resolvent;
