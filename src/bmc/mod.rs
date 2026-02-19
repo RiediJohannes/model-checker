@@ -52,4 +52,28 @@ mod tests {
 
         execute_bmc(AIGER_FILE, BOUND, false, PropertyCheck::Fail);
     }
+
+    #[test]
+    fn interpolated_counter_fail() {
+        const AIGER_FILE: &str = "data/count10.aag";
+        const BOUND: u32 = 2;
+
+        execute_bmc(AIGER_FILE, BOUND, true, PropertyCheck::Fail);
+    }
+
+    #[test]
+    fn interpolated_lock_fail() {
+        const AIGER_FILE: &str = "data/lock_5.aag";
+        const BOUND: u32 = 1;
+
+        execute_bmc(AIGER_FILE, BOUND, true, PropertyCheck::Fail);
+    }
+
+    #[test]
+    fn interpolated_safe_lock_ok() {
+        const AIGER_FILE: &str = "data/safe.aag";
+        const BOUND: u32 = 2;
+
+        execute_bmc(AIGER_FILE, BOUND, true, PropertyCheck::Ok);
+    }
 }

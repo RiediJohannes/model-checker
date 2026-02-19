@@ -1,5 +1,52 @@
 use super::aiger::AIG;
-use crate::logic::VAR_OFFSET;
+use crate::logic::solving::Solver;
+use crate::logic::{CNF, VAR_OFFSET, XCNF};
+use std::collections::HashSet;
+
+
+pub fn vars_in_cnf(cnf: &CNF) -> HashSet<i32> {
+    let mut vars = HashSet::new();
+    for clause in cnf {
+        for lit in clause {
+            vars.insert(lit.var());
+        }
+    }
+    vars
+}
+
+/// Verifies that the interpolant `I` satisfies the following properties w.r.t. the clause partition `(A, B)`:
+/// - A => I
+/// - B => ~I
+/// - I only contains variables shared between A and B
+#[allow(non_snake_case)]
+pub fn verify_interpolant_properties(interpolant: &XCNF, A_cnf: CNF, B_cnf: CNF, top_var: i32) {
+    // Property 1: A => I, or equivalently (A and ~I) is UNSAT
+    let mut solver_a = Solver::new();
+    for _ in 1..=top_var { solver_a.add_var(); }
+
+    for clause in &A_cnf { solver_a.add_clause(clause); }
+    for clause in &interpolant.formula.clauses { solver_a.add_clause(clause); }
+    solver_a.add_clause([-interpolant.out_lit]);
+    assert!(!solver_a.solve(), "Property A => I failed: A and ~I is SAT!");
+
+    // Property 2: B => ~I, or equivalently (I and B) is UNSAT
+    let mut solver_b = Solver::new();
+    for _ in 1..=top_var { solver_b.add_var(); }
+
+    for clause in &B_cnf { solver_b.add_clause(clause); }
+    for clause in &interpolant.formula.clauses { solver_b.add_clause(clause); }
+    solver_b.add_clause([interpolant.out_lit]);
+    assert!(!solver_b.solve(), "Property B => ~I failed: I and B is SAT!");
+
+    // Property 3: Interpolant I only contains variables shared between A and B
+    let A_vars = vars_in_cnf(&A_cnf);
+    let B_vars = vars_in_cnf(&B_cnf);
+    let I_vars = vars_in_cnf(&interpolant.formula);
+
+    // Obtain all variables local to some partition (either A or B)
+    let local_vars = A_vars.symmetric_difference(&B_vars).cloned().collect();
+    assert!(I_vars.is_disjoint(&local_vars), "Interpolant I contained some variables local to either partition A or B!");
+}
 
 pub fn print_sat_model(graph: &AIG, model: &[i8]) {
     let num_i = graph.inputs.len();
