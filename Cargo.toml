@@ -1,6 +1,6 @@
 [package]
 name = "model-checker"
-version = "2.1.1"
+version = "2.2.0"
 edition = "2024"
 authors = ["Johannes Riedmann"]
 links = ""
@@ -16,8 +16,5 @@ thiserror = "2.0.18"
 
 [build-dependencies]
 cxx-build = "1.0"
-
-[dev-dependencies]
-pretty_assertions = "1.4.1"
 
 [lints.clippy]

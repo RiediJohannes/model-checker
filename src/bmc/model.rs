@@ -1,13 +1,15 @@
 use crate::bmc::aiger::{AndGate, Latch, ParseError, Signal, AIG};
-use crate::bmc::{aiger, debug};
+use crate::bmc::aiger;
 use crate::logic::resolution::Partition;
 use crate::logic::solving::{SimpleSolver, Solver};
 use crate::logic::{Clause, Literal, CNF, FALSE, TRUE, XCNF};
 
-use crate::cnf;
 use std::collections::HashMap;
 use std::ops::Deref;
 use thiserror::Error;
+
+#[cfg(debug_assertions)]
+use crate::bmc::debug;
 
 
 #[derive(Error, Debug)]
@@ -63,23 +65,12 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
     bmc.unwind(k)?;
 
     loop {
-        // Q' <- Add all interpolants in I to initial states Q
-        // Seed BMC with initial states Q' and F from the transition relation unrolls
-
         if bmc.check() == ModelConclusion::Safe {
             let itp_s1 = bmc.compute_interpolant()
                 .ok_or(ModelCheckingError::FailedInterpolation(k, bmc.interpolation_count()))?;
 
-            // TODO Remove these debug checks
-                let proof = bmc.solver.resolution.take().unwrap();
-                // let a_clauses: Vec<Clause> = proof.clauses_in_partition(Partition::A).map(|c| proof.get_clause(*c).unwrap().clone()).collect();
-                let mut a_clauses: Vec<Clause> = proof.clauses_in_partition(Partition::A).map(|c| proof.get_clause(*c).unwrap().clone()).collect();
-                a_clauses.push(Clause::from(-bmc.assumption_lit.unwrap()));
-                let b_clauses: Vec<Clause> = proof.clauses_in_partition(Partition::B).map(|c| proof.get_clause(*c).unwrap().clone()).collect();
-                debug::verify_interpolant_properties(&itp_s1, CNF::from(a_clauses), CNF::from(b_clauses), bmc.solver.top_var);
-
-                bmc.solver.resolution = Some(proof);
-            // End of debug checks
+            #[cfg(debug_assertions)]
+            check_interpolant(&mut bmc, &itp_s1);
 
             // I(s0) <- Rename interpolant I(s1) to I(s0) (talk about states in time step t = 0)
             let itp_s0 = bmc.rename_interpolant(itp_s1);
@@ -89,12 +80,14 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
                 return Ok(PropertyCheck::Ok)
             }
 
+            // Merge new interpolant I^{i+1} with current initial states Q or I^1 or I^2 ... or I^i
             bmc.add_interpolant(itp_s0);
         } else {
             if bmc.interpolation_count() == 0 {
                 return Ok(PropertyCheck::Fail);
             }
 
+            // Increase k by one step and start BMC from scratch (discard all interpolants)
             k += 1;
             bmc = BmcModel::from_aig(graph, k)?;
             bmc.add_initial_states()?;
@@ -258,9 +251,13 @@ impl BmcModel<'_> {
         // If the formula is SAT, the model's property was violated
         match is_sat {
             true => {
-                let model = self.solver.get_model();
-                // debug::print_sat_model(self.graph, model.as_slice());
-                debug::print_input_trace(self.graph, model.as_slice());
+                #[cfg(debug_assertions)]
+                {
+                    let model = self.solver.get_model();
+                    // debug::print_sat_model(self.graph, model.as_slice());
+                    debug::print_input_trace(self.graph, model.as_slice());
+                }
+
                 ModelConclusion::CounterExample
             },
             false => ModelConclusion::Safe
@@ -420,12 +417,26 @@ impl BmcModel<'_> {
 }
 
 
+#[cfg(debug_assertions)]
+pub fn check_interpolant(bmc: &mut BmcModel, interpolant: &XCNF) {
+    let proof = bmc.solver.resolution.take().unwrap();
+
+    let mut a_clauses: Vec<Clause> = proof.clauses_in_partition(Partition::A).map(|c| proof.get_clause(*c).unwrap().clone()).collect();
+    a_clauses.push(Clause::from(-bmc.assumption_lit.unwrap()));   // add the assumption as a A-partition unit clause
+    let b_clauses: Vec<Clause> = proof.clauses_in_partition(Partition::B).map(|c| proof.get_clause(*c).unwrap().clone()).collect();
+
+    debug::verify_interpolant_properties(interpolant, CNF::from(a_clauses), CNF::from(b_clauses), bmc.solver.top_var);
+
+    bmc.solver.resolution = Some(proof);
+}
+
 
 // ================= Unit Tests ================
 #[cfg(test)]
 #[allow(non_snake_case)]
 mod tests {
     use super::*;
+    use crate::cnf;
 
     impl Default for AIG {
         fn default() -> Self {

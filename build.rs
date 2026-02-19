@@ -12,7 +12,7 @@ fn main() {
         .file("src/logic/minisat/Solver.C")
         .file("src/logic/minisat/Stub.C")
         .std("gnu++11")  // max-version for minisat 1.14 AND min-version for CXX bridge
-        // .flag("-O3")
+        .flag("-O3")
         .flag("-ffloat-store")
         .flag("-Wno-unused-result")
         .flag("-Wno-unused-parameter")

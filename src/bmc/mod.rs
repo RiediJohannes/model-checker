@@ -1,9 +1,10 @@
 mod aiger;
 mod model;
-mod debug;
 
 pub use model::*;
 
+#[cfg(debug_assertions)]
+mod debug;
 
 #[cfg(test)]
 mod tests {
