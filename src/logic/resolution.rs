@@ -60,6 +60,10 @@ impl ResolutionProof {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.resolution_steps.len()
+    }
+
     pub fn get_clause(&self, clause_id: i32) -> Option<&Clause> {
         if clause_id >= 0 {
             self.root_clauses.get(clause_id as usize)

@@ -11,7 +11,8 @@ struct ResolutionProof;  // full definition in solving.rs
 
 class SolverStub {
 public:
-    SolverStub(ResolutionProof& proofStore);
+    explicit SolverStub(ResolutionProof& proofStore);  // Solver with proof logging
+    SolverStub();   // Solver without proof logging
     ~SolverStub();
 
     Literal newVar();
@@ -22,7 +23,8 @@ public:
 
 private:
     Solver solver;
-    CallbackTraverser traverser;
+    CallbackTraverser* traverser;
 };
 
-std::unique_ptr<SolverStub> newSolver(ResolutionProof& resolution);
+std::unique_ptr<SolverStub> newSolver();
+std::unique_ptr<SolverStub> newSolver(ResolutionProof& proofStore);

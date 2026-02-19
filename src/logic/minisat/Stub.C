@@ -7,9 +7,15 @@ inline Lit literalToLit(const Literal& l) {
 }
 
 SolverStub::SolverStub(ResolutionProof& proofStore)
-    : traverser(proofStore)
+    : traverser(new CallbackTraverser(proofStore))
 {
-    solver.proof = new Proof(traverser);
+    solver.proof = new Proof(*traverser);
+}
+
+SolverStub::SolverStub()
+    : traverser(nullptr)
+{
+    solver.proof = nullptr;
 }
 
 Literal SolverStub::newVar() {
@@ -59,9 +65,18 @@ std::unique_ptr<SolverStub> newSolver(ResolutionProof& proofStore) {
     return std::unique_ptr<SolverStub>(new SolverStub(proofStore));
 }
 
+std::unique_ptr<SolverStub> newSolver() {
+    return std::unique_ptr<SolverStub>(new SolverStub());
+}
+
 SolverStub::~SolverStub() {
     if (solver.proof != nullptr) {
         delete solver.proof;
         solver.proof = nullptr;
+    }
+
+    if (traverser != nullptr) {
+        delete traverser;
+        traverser = nullptr;
     }
 }

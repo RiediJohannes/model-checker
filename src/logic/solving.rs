@@ -35,7 +35,10 @@ pub mod ffi {
         type SolverStub;
 
         // Functions implemented in C++.
+        #[rust_name = "newSolverWithProof"]
         fn newSolver(proof_store: &mut ResolutionProof) -> UniquePtr<SolverStub>;
+        fn newSolver() -> UniquePtr<SolverStub>;
+
         fn newVar(self: Pin<&mut SolverStub>) -> Literal;
         fn addClause(self: Pin<&mut SolverStub>, clause: &[Literal]);
         fn solve(self: Pin<&mut SolverStub>) -> bool;
@@ -103,8 +106,8 @@ impl From<i32> for Literal {
 }
 
 
-/// Thin wrapper around [SolverStub] to offer a more developer-friendly interface, plus some additional
-/// methods for logic formula transformations.
+/// Wrapper around [SolverStub] to offer a more developer-friendly interface and enable proof-logging,
+/// plus some additional methods for logic formula transformations (tseitin transformations).
 pub struct Solver {
     stub: UniquePtr<SolverStub>,
     pub top_var: i32,   // ID of the highest variable instantiated so far
@@ -116,7 +119,7 @@ impl Solver {
         let mut resolution = Box::new(ResolutionProof::new());
 
         let mut solver = Self {
-            stub: ffi::newSolver(&mut resolution),
+            stub: ffi::newSolverWithProof(&mut resolution),
             top_var: -1,
             resolution: Some(resolution),
         };
@@ -215,6 +218,58 @@ impl Solver {
 
         let clauses = &left.formula & &right.formula & &tseitin_clauses;
         XCNF::new(clauses, tseitin_lit)
+    }
+
+    /// Quick and idiomatic access to a pinned mutable reference of the underlying solver.
+    fn remote(&mut self) -> Pin<&mut SolverStub> {
+        self.stub.pin_mut()
+    }
+}
+
+
+/// Thin wrapper around [SolverStub] to offer a more developer-friendly interface.
+/// This struct uses the solver without any proof logging capabilities for increased performance.
+pub struct SimpleSolver {
+    stub: UniquePtr<SolverStub>,
+    pub top_var: i32,   // ID of the highest variable instantiated so far
+    pub assumptions: Vec<Literal>,
+}
+
+impl SimpleSolver {
+    pub fn new() -> Self {
+        let mut solver = Self {
+            stub: ffi::newSolver(),
+            top_var: -1,
+            assumptions: Vec::new(),
+        };
+
+        // Add the constant false literal to the solver
+        let bottom = solver.add_var();
+        assert_eq!(bottom.var(), BOTTOM);
+        solver.add_clause([-bottom]);
+
+        solver
+    }
+
+    pub fn add_var(&mut self) -> Literal {
+        self.top_var += 1;
+        self.remote().newVar()
+    }
+
+    pub fn add_clause<L>(&mut self, clause: L)
+    where L: AsRef<[Literal]>
+    {
+        self.remote().addClause(clause.as_ref());
+    }
+
+    pub fn solve(&mut self) -> bool {
+        let assumptions = self.assumptions.clone();
+        self.remote().solve_with_assumptions(&assumptions)
+    }
+
+    pub fn get_model(&mut self) -> UniquePtr<CxxVector<i8>>
+    {
+        self.remote().getModel()
     }
 
     /// Quick and idiomatic access to a pinned mutable reference of the underlying solver.
