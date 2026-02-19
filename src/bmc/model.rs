@@ -1,7 +1,7 @@
 use crate::bmc::aiger::{AndGate, Latch, ParseError, Signal, AIG};
 use crate::bmc::{aiger, debug};
 use crate::logic::resolution::Partition;
-use crate::logic::solving::Solver;
+use crate::logic::solving::{SimpleSolver, Solver};
 use crate::logic::{Clause, Literal, CNF, FALSE, TRUE, XCNF};
 
 use crate::cnf;
@@ -83,15 +83,9 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
 
             // I(s0) <- Rename interpolant I(s1) to I(s0) (talk about states in time step t = 0)
             let itp_s0 = bmc.rename_interpolant(itp_s1);
-            dbg!(&itp_s0);
 
             // Fixpoint Check
-            // dbg!(bmc.is_fixpoint(&itp_s0));
-            // if bmc.is_fixpoint(&itp_s0) {
-            //     return Ok(PropertyCheck::Ok)
-            // }
-            // TODO Replace this "give up after 50 interpolants" hack with a proper fixpoint check
-            if bmc.interpolants.len() > 50 {
+            if bmc.check_fixpoint(&itp_s0) {
                 return Ok(PropertyCheck::Ok)
             }
 
@@ -115,6 +109,7 @@ pub struct BmcModel<'a> {
     interpolants: Vec<XCNF>,
     assumption_lit: Option<Literal>,
     solver: Solver,
+    fixpoint_solver: SimpleSolver
 }
 
 impl BmcModel<'_> {
@@ -128,7 +123,8 @@ impl BmcModel<'_> {
             time_steps: Vec::new(),
             interpolants: Vec::new(),
             assumption_lit: None,
-            solver: Solver::new()
+            solver: Solver::new(),
+            fixpoint_solver: SimpleSolver::new()
         };
 
         // Initialize variables for all signals at time steps 0..=k
@@ -140,6 +136,9 @@ impl BmcModel<'_> {
             }
         }
 
+        // Add the same number of variables to the fixpoint solver
+        for _ in 1..=model.solver.top_var { model.fixpoint_solver.add_var(); }
+
         Ok(model)
     }
 
@@ -149,7 +148,9 @@ impl BmcModel<'_> {
         self.solver.set_partition(Partition::A);
 
         // Single literal to enforce (or deactivate) the initial latch state
-        let q_0 = self.solver.add_var();
+        let q0 = self.solver.add_var();
+        let _q0_fp = self.fixpoint_solver.add_var();
+        debug_assert_eq!(q0, _q0_fp);
 
         // AND-gates
         for gate in self.graph.and_gates.iter() {
@@ -160,20 +161,25 @@ impl BmcModel<'_> {
         let mut latch_lits = Vec::new();
         for latch in self.graph.latches.iter() {
             let init_val = self.signal_at_time(&latch.out, 0)?;
-            self.solver.add_clause([-q_0, -init_val]);  // q_0 implies L_i@0 = 0
+            self.solver.add_clause([-q0, -init_val]);  // q_0 implies L_i@0 = 0
+            self.fixpoint_solver.add_clause([-q0, -init_val]);
 
             latch_lits.push(init_val);
         }
 
-        // TODO Is this actually necessary?
-        latch_lits.push(q_0);
+        // TODO Is this direction of the implication actually necessary?
+        latch_lits.push(q0);
         self.solver.add_clause(latch_lits.as_slice());
+        self.fixpoint_solver.add_clause(latch_lits.as_slice());
 
+        // Add extendable clause to force initial states
         let a = self.solver.add_var();
         self.assumption_lit = Some(a);
-        self.solver.add_clause([q_0, a]);
+        self.solver.add_clause([q0, a]);
 
-        Ok(q_0)
+        self.fixpoint_solver.assumptions.push(-q0);
+
+        Ok(q0)
     }
 
     /// Unwinds the transition relation as described by the model's [AIG] graph `k` times
@@ -216,9 +222,10 @@ impl BmcModel<'_> {
 
         // Add new variables to the solver
         for _ in (self.solver.top_var+1)..=interpolant.out_lit.var() { self.solver.add_var(); }
+
         // Add all clauses to the solver
         for clause in interpolant.formula.clauses {
-            self.solver.add_clause(clause);
+            self.solver.add_clause(&clause);
         }
 
         // Add interpolant to the current solver clauses in an incremental manner
@@ -265,10 +272,11 @@ impl BmcModel<'_> {
     /// The resulting interpolant will over-approximate the states that satisfy the clauses in [Partition::A].
     #[allow(non_snake_case)]
     pub fn compute_interpolant(&mut self) -> Option<XCNF> {
-        let mut interpolants: HashMap<i32, XCNF> = HashMap::new();
         // Temporarily take ownership of the resolution proof to allow for mutable references to solver during this function
         let proof_box = self.solver.resolution.take()?;
         let proof = proof_box.deref();
+
+        let mut interpolants: HashMap<i32, XCNF> = HashMap::with_capacity(2 * proof.len() + 1);
 
         // Base case: Annotate root clauses in partition A/B with Bottom/Top
         for A_clause_id in proof.clauses_in_partition(Partition::A) {
@@ -284,7 +292,7 @@ impl BmcModel<'_> {
         for step in proof.resolutions() {
             let I_L: &XCNF = interpolants.get(&step.left).unwrap();
             let I_R: &XCNF = interpolants.get(&step.right).unwrap();
-            assert!(!interpolants.contains_key(&step.resolvent));
+            debug_assert!(!interpolants.contains_key(&step.resolvent));
 
             let pivot_partition = proof.var_partition(step.pivot)?;
             let I_resolvent: XCNF = match pivot_partition {
@@ -317,14 +325,9 @@ impl BmcModel<'_> {
             last = step.resolvent;
         }
 
-        // the last clause must be empty
-        // let last_clause = proof.get_clause(last)?;
-        // assert_eq!(last_clause, &Clause::from_vec(vec![]));
-
         self.solver.resolution = Some(proof_box);   // return proof ownership
 
         let final_interpolant = interpolants.remove(&last)?;
-        // let final_interpolant = interpolants.get(&last)?.clone();
         Some(final_interpolant)
     }
 
@@ -337,48 +340,26 @@ impl BmcModel<'_> {
         interpolant
     }
 
-    pub fn is_fixpoint(&self, _interpolant: &XCNF) -> bool {
-        // Clean new solver for the fixpoint check
-        let mut fp_solver = Solver::new();
-        for _ in 1..=self.solver.top_var { fp_solver.add_var(); }
+    pub fn check_fixpoint(&mut self, interpolant: &XCNF) -> bool {
+        for _ in (self.fixpoint_solver.top_var+1)..=interpolant.out_lit.var() {
+            self.fixpoint_solver.add_var();
+        }
 
-        self.interpolants.len() > 20
-    }
-
-    pub fn is_fixpoint_test(&self, interpolant: &XCNF) -> bool {
-        // Clean new solver for the fixpoint check
-        let mut fp_solver = Solver::new();
-        for _ in 1..=self.solver.top_var { fp_solver.add_var(); }
-
-        // Placeholder Q
-        let mut q = interpolant.clone();
-        q.formula.clauses.remove(0);
-        q.formula.clauses.remove(0);
-
-        let a = Literal::from_var(33);
-        let b = fp_solver.add_var();
-        let q = XCNF::new(cnf!([a], [-a, b], [-b, a]), b);
-
-        // TODO Check if I(s0) or Q') => Q'
-        // (I or Q) => Q
-        // ~(I or Q) or Q
-        // (~I and ~Q) or Q
-
-        // ~[(I or Q) => Q]
-        // ~[~(I or Q) or Q]
-        // (I or Q) and ~Q
+        // Add all clauses of the new interpolant to the solver
         for clause in interpolant.formula.clauses.iter() {
-            fp_solver.add_clause(clause);
-        }
-        for clause in q.formula.clauses.iter() {
-            fp_solver.add_clause(clause);
+            self.fixpoint_solver.add_clause(clause);
         }
 
-        fp_solver.add_clause([-q.out_lit]);
-        fp_solver.add_clause([q.out_lit, interpolant.out_lit]);
+        // Reached fixpoint if I and (~Q and ~I1 and ~I2...) is UNSAT
+        if self.fixpoint_solver.assumptions.len() > 1 {
+            let last_itp_lit = self.fixpoint_solver.assumptions.pop().unwrap();
+            self.fixpoint_solver.assumptions.push(-last_itp_lit);
+        }
 
-        let negation_is_sat = fp_solver.solve();
-        !negation_is_sat
+        self.fixpoint_solver.assumptions.push(interpolant.out_lit);
+
+        let not_implied_is_sat = self.fixpoint_solver.solve();
+        !not_implied_is_sat   // ~implication is unsat <=> implication is valid <=> reached fixpoint
     }
 
 
@@ -417,6 +398,12 @@ impl BmcModel<'_> {
         self.solver.add_clause([-in1, -in2, out]);
         self.solver.add_clause([-out, in1]);
         self.solver.add_clause([-out, in2]);
+
+        if t == 0 {
+            self.fixpoint_solver.add_clause([-in1, -in2, out]);
+            self.fixpoint_solver.add_clause([-out, in1]);
+            self.fixpoint_solver.add_clause([-out, in2]);
+        }
 
         Ok(())
     }
@@ -459,7 +446,8 @@ mod tests {
                 time_steps: Vec::new(),
                 interpolants: Vec::new(),
                 assumption_lit: None,
-                solver: Solver::new()
+                solver: Solver::new(),
+                fixpoint_solver: SimpleSolver::new(),
             }
         }
     }
