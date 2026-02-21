@@ -124,12 +124,15 @@ impl Solver {
             resolution: Some(resolution),
         };
 
-        solver.clear_partition();
 
-        // Add the constant false literal to the solver
+        // Add the constant false literal to the solver (in partition A)
+        solver.set_partition(Partition::A);
+
         let bottom = solver.add_var();
         assert_eq!(bottom.var(), BOTTOM);
         solver.add_clause([-bottom]);
+
+        solver.clear_partition();
 
         solver
     }
