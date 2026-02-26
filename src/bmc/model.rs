@@ -1,20 +1,20 @@
 use crate::bmc::aiger;
 use crate::bmc::aiger::{AndGate, Latch, ParseError, Signal, AIG};
-use crate::logic::resolution::Partition;
+use crate::logic::resolution::{Partition, VariableLocality::*};
 use crate::logic::solving::{SimpleSolver, Solver};
-use crate::logic::{Clause, Literal, CNF, FALSE, TRUE, XCNF};
+use crate::logic::{Literal, FALSE, TRUE, XCNF};
 
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 use std::ops::Deref;
 use sysinfo::System;
 use thiserror::Error;
 
+#[cfg(debug_assertions)] use crate::bmc::debug;
+#[cfg(debug_assertions)] use crate::logic::{Clause, CNF};
 
-#[cfg(debug_assertions)]
-use crate::bmc::debug;
 
-
-const MIN_AVAILABLE_BYTES : u64 = 1 * 1024 * 1024 * 1024;  // 1 GB
+const MIN_AVAILABLE_BYTES : u64 = 1024 * 1024 * 1024;  // 1 GB
 
 #[derive(Error, Debug)]
 pub enum ModelCheckingError {
@@ -54,6 +54,11 @@ pub enum PropertyCheck {
     Ok,
     Fail,
 }
+impl Display for PropertyCheck {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", format!("{:?}", self).to_uppercase())
+    }
+}
 
 
 pub fn load_model(name: &str) -> Result<AIG, ParseError> {
@@ -64,9 +69,6 @@ pub fn check_bounded(graph: &AIG, k: u32) -> Result<PropertyCheck, ModelChecking
     // Single iteration of bounded model checking
     let mut bmc = BmcModel::from_aig(graph, k)?;
 
-    bmc.add_initial_states()?;
-    bmc.unwind(k)?;
-
     let output = match bmc.check() {
         ModelConclusion::Safe => PropertyCheck::Ok,
         ModelConclusion::CounterExample => PropertyCheck::Fail
@@ -76,22 +78,17 @@ pub fn check_bounded(graph: &AIG, k: u32) -> Result<PropertyCheck, ModelChecking
 
 pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyCheck, ModelCheckingError> {
     let mut k = initial_bound;
-
-    // Q <- Compute exact initial states Q
-    // F <- Unroll transition relation k times
     let mut bmc = BmcModel::from_aig(graph, k)?;
 
-    // These two lines are just a placeholder
-    // TODO Maybe merge this with the from_aig method and keep q_0 as a private member
-    bmc.add_initial_states()?;
-    bmc.unwind(k)?;
-
     loop {
+        #[cfg(debug_assertions)]
+        println!("k = {} | interpolants: {}", k, bmc.interpolation_count);
+
         if bmc.check() == ModelConclusion::Safe {
             let itp_s1 = match bmc.compute_interpolant() {
                 Ok(itp) => itp,
                 Err(InterpolationError::OutOfMemory) => return Err(ModelCheckingError::OutOfMemory),
-                _ => return Err(ModelCheckingError::FailedInterpolation(k, bmc.interpolation_count()))
+                _ => return Err(ModelCheckingError::FailedInterpolation(k, bmc.interpolation_count))
             };
 
             #[cfg(debug_assertions)]
@@ -108,15 +105,13 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
             // Merge new interpolant I^{i+1} with current initial states Q or I^1 or I^2 ... or I^i
             bmc.add_interpolant(itp_s0);
         } else {
-            if bmc.interpolation_count() == 0 {
+            if bmc.interpolation_count == 0 {
                 return Ok(PropertyCheck::Fail);
             }
 
             // Increase k by one step and start BMC from scratch (discard all interpolants)
             k += 1;
             bmc = BmcModel::from_aig(graph, k)?;
-            bmc.add_initial_states()?;
-            bmc.unwind(k)?;
         }
     }
 }
@@ -124,7 +119,7 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
 pub struct BmcModel<'a> {
     graph: &'a AIG,
     time_steps: Vec<HashMap<u32, Literal>>,
-    interpolants: Vec<XCNF>,
+    interpolation_count: usize,
     assumption_lit: Option<Literal>,
     solver: Solver,
     fixpoint_solver: SimpleSolver
@@ -134,12 +129,12 @@ impl BmcModel<'_> {
 
     /// Creates a new bounded model checking (BMC) instance from an And-Inverter Graph (AIG).
     /// The model immediately initializes all SAT variables needed to express the various circuit
-    /// signals in all time steps t in [0, k].
+    /// signals in all time steps t in [0, k] and unrolls the transition relation [k] times.
     pub fn from_aig(graph: &'_ AIG, k: u32) -> Result<BmcModel<'_>, ModelCheckingError> {
         let mut model = BmcModel {
             graph,
             time_steps: Vec::new(),
-            interpolants: Vec::new(),
+            interpolation_count: 0,
             assumption_lit: None,
             solver: Solver::new(),
             fixpoint_solver: SimpleSolver::new()
@@ -157,85 +152,16 @@ impl BmcModel<'_> {
         // Add the same number of variables to the fixpoint solver
         for _ in 1..=model.solver.top_var { model.fixpoint_solver.add_var(); }
 
+        // Compute and enforce the exact initial states Q
+        model.add_initial_states()?;
+        // Unroll the transition relation k times
+        model.unwind(k)?;
+
         Ok(model)
     }
 
-    /// Adds clauses for the exact (as opposed to over-approximated) initial states Q_0 to the solver.
-    /// Returns a **[Literal] q_0**, which enforces these initial states when set to true.
-    pub fn add_initial_states(&mut self) -> Result<Literal, ModelCheckingError> {
-        self.solver.set_partition(Partition::A);
-
-        // Single literal to enforce (or deactivate) the initial latch state
-        let q0 = self.solver.add_var();
-        let _q0_fp = self.fixpoint_solver.add_var();
-        debug_assert_eq!(q0, _q0_fp);
-
-        // AND-gates
-        for gate in self.graph.and_gates.iter() {
-            self.encode_and_gate(gate, 0)?;
-        }
-
-        // Latches
-        let mut latch_lits = Vec::new();
-        for latch in self.graph.latches.iter() {
-            let init_val = self.signal_at_time(&latch.out, 0)?;
-            self.solver.add_clause([-q0, -init_val]);  // q_0 implies L_i@0 = 0
-            self.fixpoint_solver.add_clause([-q0, -init_val]);
-
-            latch_lits.push(init_val);
-        }
-
-        latch_lits.push(q0);
-        self.solver.add_clause(latch_lits.as_slice());
-        self.fixpoint_solver.add_clause(latch_lits.as_slice());
-
-        // Add extendable clause to force initial states
-        let a = self.solver.add_var();
-        self.assumption_lit = Some(a);
-        self.solver.add_clause([q0, a]);
-
-        self.fixpoint_solver.assumptions.push(-q0);
-
-        Ok(q0)
-    }
-
-    /// Unwinds the transition relation as described by the model's [AIG] graph `k` times
-    /// and adds the resulting clauses to the model's state.
-    pub fn unwind(&'_ mut self, k: u32) -> Result<(), ModelCheckingError> {
-        self.solver.set_partition(Partition::A);
-
-        // We need variables for each input, latch, gate and output at each time step
-        for t in 1..=k {
-            if t == 2 {
-                self.solver.set_partition(Partition::B);
-            }
-
-            // AND-gates
-            for gate in self.graph.and_gates.iter() {
-                self.encode_and_gate(gate, t)?;
-            }
-            // Latches
-            for latch in self.graph.latches.iter() {
-                self.encode_latch(latch, t)?;
-            }
-        }
-
-        self.solver.set_partition(Partition::B);
-
-        // Assert that the output is true at SOME time step -> property violation
-        let property_violation_clause: Vec<Literal> = (1..=k)
-            .map(|t| self.signal_at_time(&self.graph.outputs[0], t))
-            .collect::<Result<_, _>>()?;
-
-        self.solver.add_clause(property_violation_clause);
-
-        Ok(())
-    }
-
     pub fn add_interpolant(&mut self, interpolant: XCNF) {
-        // self.interpolants.push(interpolant.clone());  // TODO Maybe we don't even need this list?
-        self.interpolants.push(XCNF::from(TRUE));  // TODO Maybe we don't even need this list?
-
+        self.interpolation_count += 1;
         self.solver.set_partition(Partition::A);
 
         // Add new variables to the solver
@@ -259,10 +185,6 @@ impl BmcModel<'_> {
         }
     }
 
-    pub fn interpolation_count(&self) -> usize {
-        self.interpolants.len()
-    }
-
     /// Check the property encoded by the current state of the [BmcModel].
     /// ## Returns
     /// - [ModelConclusion::CounterExample]: If a property violation could be found within the `k` unwinding steps.
@@ -279,7 +201,6 @@ impl BmcModel<'_> {
                 #[cfg(debug_assertions)]
                 {
                     let model = self.solver.get_model();
-                    // debug::print_sat_model(self.graph, model.as_slice());
                     debug::print_input_trace(self.graph, model.as_slice());
                 }
 
@@ -321,17 +242,17 @@ impl BmcModel<'_> {
             let I_R: &XCNF = interpolants.get(&step.right).ok_or(InterpolationError::MissingInterpolant(step.right))?;
             debug_assert!(interpolants.get(&step.resolvent).is_none());
 
-            let pivot_partition = proof.var_partition(step.pivot)
+            let pivot_locality = proof.var_locality(step.pivot)
                 .ok_or(InterpolationError::MissingVariablePartition(step.pivot.var()))?;
 
-            let I_resolvent: XCNF = match pivot_partition {
-                Partition::A => {  // I_L OR I_R
+            let I_resolvent: XCNF = match pivot_locality {
+                Local(Partition::A) => {  // I_L OR I_R
                     self.solver.tseitin_or(I_L, I_R)
                 },
-                Partition::B => {  // I_L AND I_R
+                Local(Partition::B) => {  // I_L AND I_R
                     self.solver.tseitin_and(I_L, I_R)
                 },
-                Partition::AB => { // (I_L OR x) AND (I_R OR ~x)
+                Shared => { // (I_L OR x) AND (I_R OR ~x)
                     let x = step.pivot;
                     let left_conjunct = self.solver.tseitin_or(I_L, &XCNF::from(x));
                     let right_conjunct = self.solver.tseitin_or(I_R, &XCNF::from(-x));
@@ -394,6 +315,78 @@ impl BmcModel<'_> {
 
     /* --- Private methods --- */
 
+    /// Adds clauses for the exact (as opposed to over-approximated) initial states Q_0 to the solver.
+    /// Returns a **[Literal] q_0**, which enforces these initial states when set to true.
+    fn add_initial_states(&mut self) -> Result<Literal, ModelCheckingError> {
+        self.solver.set_partition(Partition::A);
+
+        // Single literal to enforce (or deactivate) the initial latch state
+        let q0 = self.solver.add_var();
+        let _q0_fp = self.fixpoint_solver.add_var();
+        debug_assert_eq!(q0, _q0_fp);
+
+        // AND-gates
+        for gate in self.graph.and_gates.iter() {
+            self.encode_and_gate(gate, 0)?;
+        }
+
+        // Latches
+        let mut latch_lits = Vec::new();
+        for latch in self.graph.latches.iter() {
+            let init_val = self.signal_at_time(&latch.out, 0)?;
+            self.solver.add_clause([-q0, -init_val]);  // q_0 implies L_i@0 = 0
+            self.fixpoint_solver.add_clause([-q0, -init_val]);
+
+            latch_lits.push(init_val);
+        }
+
+        latch_lits.push(q0);
+        self.solver.add_clause(latch_lits.as_slice());
+        self.fixpoint_solver.add_clause(latch_lits.as_slice());
+
+        // Add extendable clause to force initial states
+        let a = self.solver.add_var();
+        self.assumption_lit = Some(a);
+        self.solver.add_clause([q0, a]);
+
+        self.fixpoint_solver.assumptions.push(-q0);
+
+        Ok(q0)
+    }
+
+    /// Unwinds the transition relation as described by the model's [AIG] graph `k` times
+    /// and adds the resulting clauses to the model's state.
+    fn unwind(&'_ mut self, k: u32) -> Result<(), ModelCheckingError> {
+        self.solver.set_partition(Partition::A);
+
+        // We need variables for each input, latch, gate and output at each time step
+        for t in 1..=k {
+            if t == 2 {
+                self.solver.set_partition(Partition::B);
+            }
+
+            // AND-gates
+            for gate in self.graph.and_gates.iter() {
+                self.encode_and_gate(gate, t)?;
+            }
+            // Latches
+            for latch in self.graph.latches.iter() {
+                self.encode_latch(latch, t)?;
+            }
+        }
+
+        self.solver.set_partition(Partition::B);
+
+        // Assert that the output is true at SOME time step -> property violation
+        let property_violation_clause: Vec<Literal> = (1..=k)
+            .map(|t| self.signal_at_time(&self.graph.outputs[0], t))
+            .collect::<Result<_, _>>()?;
+
+        self.solver.add_clause(property_violation_clause);
+
+        Ok(())
+    }
+
     /// Explicitly adds a new time step to the model. [Literal]s for [Signal]s can only be instantiated
     /// for time steps in the current range of unrolled time steps. Returns the new time step id.
     fn add_step(&mut self) -> usize {
@@ -451,8 +444,8 @@ impl BmcModel<'_> {
         let mut sys = System::new();
         sys.refresh_memory();
 
-        #[cfg(debug_assertions)]
-        dbg!(sys.available_memory());
+        // #[cfg(debug_assertions)]
+        // dbg!(sys.available_memory());
 
         sys.available_memory() >= MIN_AVAILABLE_BYTES
     }
@@ -498,8 +491,11 @@ pub fn check_interpolant(bmc: &mut BmcModel, interpolant: &XCNF) {
     let proof = bmc.solver.resolution.take().unwrap();
 
     let mut a_clauses: Vec<Clause> = proof.clauses_in_partition(Partition::A).map(|c| proof.get_clause(*c).unwrap().clone()).collect();
-    a_clauses.push(Clause::from(-bmc.assumption_lit.unwrap()));   // add the assumption as a A-partition unit clause
     let b_clauses: Vec<Clause> = proof.clauses_in_partition(Partition::B).map(|c| proof.get_clause(*c).unwrap().clone()).collect();
+
+    if let Some(a) = bmc.assumption_lit {
+        a_clauses.push(Clause::from(-a));   // add the assumption as an A-partition unit clause
+    }
 
     debug::verify_interpolant_properties(interpolant, CNF::from(a_clauses), CNF::from(b_clauses), bmc.solver.top_var);
 
@@ -507,7 +503,6 @@ pub fn check_interpolant(bmc: &mut BmcModel, interpolant: &XCNF) {
 }
 
 #[cfg(test)]
-#[allow(non_snake_case)]
 mod tests {
     use super::*;
     use crate::cnf;
@@ -529,7 +524,7 @@ mod tests {
             BmcModel {
                 graph,
                 time_steps: Vec::new(),
-                interpolants: Vec::new(),
+                interpolation_count: 0,
                 assumption_lit: None,
                 solver: Solver::new(),
                 fixpoint_solver: SimpleSolver::new(),

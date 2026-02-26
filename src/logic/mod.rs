@@ -3,9 +3,10 @@ pub mod resolution;
 
 mod types;
 
-pub use solving::Literal;
-pub use solving::{FALSE, TRUE, VAR_OFFSET};
+pub use solving::{FALSE, TRUE, Literal};
 pub use types::*;
+
+#[cfg(debug_assertions)] pub use solving::{VAR_OFFSET};
 
 
 #[cfg(test)]

@@ -19,9 +19,12 @@ pub const TRUE: Literal = Literal::raw(TOP);
 pub const FALSE: Literal = Literal::raw(BOTTOM);
 
 
+/// This submodule defines the contract for functions and types shared across the foreign function interface (FFI)
+/// between Rust and C++.
 #[cxx::bridge]
 pub mod ffi {
     // Shared structs, whose fields will be visible to both languages
+    /// A single literal in a SAT formula.
     #[derive(Copy, Clone, Hash, PartialEq, Eq)]
     struct Literal {
         id: i32,
@@ -56,9 +59,11 @@ pub mod ffi {
 }
 
 impl Literal {
+    /// Creates a [Literal] from a given variable ID.
     pub const fn from_var(var: i32) -> Self {
         Self { id: var << 1 }
     }
+    /// Converts a raw integer to a [Literal] struct without additional parsing logic.
     pub const fn raw(lit_id: i32) -> Self {
         Self { id: lit_id }
     }
@@ -73,6 +78,8 @@ impl Literal {
         Literal { id: self.id & !1 }
     }
 
+    /// Modifies the variable ID represented by this literal. The current variable ID is moved by the
+    /// given shift, which can be both positive or negative. A shift of 0 is effectively a NOP.
     pub fn shift_var(&mut self, shift: i32) {
         let sign_bit = self.id & 1;
         let shifted_var = self.var() + shift;
@@ -178,7 +185,9 @@ impl Solver {
         self.remote().getModel()
     }
 
-    #[allow(non_snake_case)]
+    /// Connects two given propositional formulas in [XCNF] with an **OR-gate** using the tseitin transformation.
+    /// The returned [XCNF] object represents a CNF formula that is satisfiable iff the disjunction
+    /// of the given parent clauses is satisfiable.
     pub fn tseitin_or(&mut self, left: &XCNF, right: &XCNF) -> XCNF {
         // Detect trivial cases
         if left == &TRUE || right == &TRUE {
@@ -201,6 +210,9 @@ impl Solver {
         XCNF::new(clauses, tseitin_lit)
     }
 
+    /// Connects two given propositional formulas in [XCNF] with an **AND-gate** using the tseitin transformation.
+    /// The returned [XCNF] object represents a CNF formula that is satisfiable iff the conjunction
+    /// of the given parent clauses is satisfiable.
     pub fn tseitin_and(&mut self, left: &XCNF, right: &XCNF) -> XCNF {
         // Detect trivial cases
         if left == &FALSE || right == &FALSE {
@@ -288,7 +300,7 @@ impl SimpleSolver {
 #[allow(non_snake_case)]
 mod tests {
     use crate::cnf;
-    use crate::logic::resolution::Partition;
+    use crate::logic::resolution::{Partition, VariableLocality};
     use crate::logic::solving::{Solver, FALSE, TRUE, VAR_OFFSET};
     use crate::logic::{Clause, Literal, XCNF};
 
@@ -372,11 +384,11 @@ mod tests {
         assert!(!solver.solve());  // formula should be unsat
 
         let proof = solver.resolution.as_ref().unwrap();
-        assert_eq!(proof.var_partition(a1), Some(Partition::A));
-        assert_eq!(proof.var_partition(a2), Some(Partition::A));
-        assert_eq!(proof.var_partition(s),  Some(Partition::AB));
-        assert_eq!(proof.var_partition(b1), Some(Partition::B));
-        assert_eq!(proof.var_partition(b2), Some(Partition::B));
+        assert_eq!(proof.var_locality(a1), Some(VariableLocality::Local(Partition::A)));
+        assert_eq!(proof.var_locality(a2), Some(VariableLocality::Local(Partition::A)));
+        assert_eq!(proof.var_locality(s), Some(VariableLocality::Shared));
+        assert_eq!(proof.var_locality(b1), Some(VariableLocality::Local(Partition::B)));
+        assert_eq!(proof.var_locality(b2), Some(VariableLocality::Local(Partition::B)));
     }
 
     #[test]

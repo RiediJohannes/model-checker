@@ -22,9 +22,9 @@ struct Args {
 fn main() {
     let mut args = Args::parse();
 
-    // let aiger_file = "data/count10.aag";  // args.file_path
-    let aiger_file = "./../ascii/texas_ifetch_3.aag";  // args.file_path
-    let k: u32 = 30; // args.k
+    let aiger_file = "data/count10.aag";  // args.file_path
+    // let aiger_file = "./../ascii/texas_ifetch_3.aag";  // args.file_path
+    let k: u32 = 3; // args.k
     args.interpolate = true;
 
     let instance = bmc::load_model(aiger_file).unwrap_or_else(|e| {
@@ -38,7 +38,7 @@ fn main() {
     };
 
     match checking_result {
-        Ok(conclusion) => println!("{:?}", conclusion),
+        Ok(conclusion) => println!("{:}", conclusion),
         Err(e) => eprintln!("ERROR: {e}")
     }
 }

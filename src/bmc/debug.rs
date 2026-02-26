@@ -3,7 +3,6 @@ use crate::logic::solving::Solver;
 use crate::logic::{CNF, VAR_OFFSET, XCNF};
 use std::collections::HashSet;
 
-
 pub fn vars_in_cnf(cnf: &CNF) -> HashSet<i32> {
     let mut vars = HashSet::new();
     for clause in cnf {
@@ -48,38 +47,7 @@ pub fn verify_interpolant_properties(interpolant: &XCNF, A_cnf: CNF, B_cnf: CNF,
     assert!(I_vars.is_disjoint(&local_vars), "Interpolant I contained some variables local to either partition A or B!");
 }
 
-pub fn print_sat_model(graph: &AIG, model: &[i8]) {
-    let num_i = graph.inputs.len();
-    let num_l = graph.latches.len();
-    let num_a = graph.and_gates.len();
-    let frame_size = num_i + num_l + num_a;
-
-    println!("#--- SAT Model Assignment (True Variables) ---");
-
-    for (idx, &val) in model.iter().enumerate().skip(VAR_OFFSET) {
-        // Only print variables that were set to true
-        if val != 1 {
-            continue;
-        }
-
-        let normalized = idx - VAR_OFFSET;
-        let t = normalized / frame_size; // Time step
-        let f = normalized % frame_size; // Offset in frame
-
-        // Determine the semantic meaning of the variable within the current frame
-        let (label, local_idx) = if f < num_i {
-            ("Input", f)
-        } else if f < num_i + num_l {
-            ("Latch", f - num_i)
-        } else {
-            ("AND", f - (num_i + num_l))
-        };
-
-        println!("{:>4}: {}_{}@{}", idx, label, local_idx, t);
-    }
-    println!("--------------------------------------------");
-}
-
+/// Prints the series of inputs to the circuit that lead to the given satisfying assignment.
 pub fn print_input_trace(graph: &AIG, model: &[i8]) {
     let num_i = graph.inputs.len();
 
@@ -99,7 +67,6 @@ pub fn print_input_trace(graph: &AIG, model: &[i8]) {
     for k in 0..num_steps {
         print!("{:>4} | ", k);
         for i in 0..num_i {
-            // Use frame_size derived from variables().len()
             let idx = VAR_OFFSET + (k * vars_per_frame) + i;
             if let Some(&val) = model.get(idx) {
                 let display = match val {
