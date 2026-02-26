@@ -18,11 +18,13 @@ struct Args {
     interpolate: bool,
 }
 
+
 fn main() {
     let mut args = Args::parse();
 
-    let aiger_file = "data/count10.aag";  // args.file_path
-    let k: u32 = 3; // args.k
+    // let aiger_file = "data/count10.aag";  // args.file_path
+    let aiger_file = "./../ascii/texas_ifetch_3.aag";  // args.file_path
+    let k: u32 = 30; // args.k
     args.interpolate = true;
 
     let instance = bmc::load_model(aiger_file).unwrap_or_else(|e| {

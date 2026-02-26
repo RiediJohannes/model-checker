@@ -1,5 +1,5 @@
-use crate::bmc::aiger::{AndGate, Latch, ParseError, Signal, AIG};
 use crate::bmc::aiger;
+use crate::bmc::aiger::{AndGate, Latch, ParseError, Signal, AIG};
 use crate::logic::resolution::Partition;
 use crate::logic::solving::{SimpleSolver, Solver};
 use crate::logic::{Clause, Literal, CNF, FALSE, TRUE, XCNF};
@@ -8,9 +8,11 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use thiserror::Error;
 
+use sysinfo::System;
+
+
 #[cfg(debug_assertions)]
 use crate::bmc::debug;
-
 
 #[derive(Error, Debug)]
 pub enum ModelCheckingError {
@@ -18,7 +20,10 @@ pub enum ModelCheckingError {
     InvalidTimeStep(u32, u32),
 
     #[error("Failed to compute interpolant for k = {0} at iteration {1}.")]
-    FailedInterpolation(u32, usize)
+    FailedInterpolation(u32, usize),
+
+    #[error("Program ran out of available memory")]
+    OutOfMemory
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -65,12 +70,24 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
     bmc.unwind(k)?;
 
     loop {
+        // if !bmc.has_sufficient_memory() {
+        //     return Err(ModelCheckingError::OutOfMemory);
+        // }
+
+        bmc.check_memory("Before SAT check");
+
         if bmc.check() == ModelConclusion::Safe {
+            bmc.check_memory("After SAT check");
+
             let itp_s1 = bmc.compute_interpolant()
                 .ok_or(ModelCheckingError::FailedInterpolation(k, bmc.interpolation_count()))?;
 
+            bmc.check_memory("After computing interpolant");
+
             #[cfg(debug_assertions)]
             check_interpolant(&mut bmc, &itp_s1);
+
+            bmc.check_memory("After checking interpolant");
 
             // I(s0) <- Rename interpolant I(s1) to I(s0) (talk about states in time step t = 0)
             let itp_s0 = bmc.rename_interpolant(itp_s1);
@@ -82,6 +99,9 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
 
             // Merge new interpolant I^{i+1} with current initial states Q or I^1 or I^2 ... or I^i
             bmc.add_interpolant(itp_s0);
+
+            bmc.check_memory("After fixpoint check");
+            println!();
         } else {
             if bmc.interpolation_count() == 0 {
                 return Ok(PropertyCheck::Fail);
@@ -209,7 +229,8 @@ impl BmcModel<'_> {
     }
 
     pub fn add_interpolant(&mut self, interpolant: XCNF) {
-        self.interpolants.push(interpolant.clone());  // TODO Maybe we don't even need this list?
+        // self.interpolants.push(interpolant.clone());  // TODO Maybe we don't even need this list?
+        self.interpolants.push(XCNF::from(TRUE));  // TODO Maybe we don't even need this list?
 
         self.solver.set_partition(Partition::A);
 
@@ -269,11 +290,12 @@ impl BmcModel<'_> {
     /// The resulting interpolant will over-approximate the states that satisfy the clauses in [Partition::A].
     #[allow(non_snake_case)]
     pub fn compute_interpolant(&mut self) -> Option<XCNF> {
-        // Temporarily take ownership of the resolution proof to allow for mutable references to solver during this function
+        // Temporarily take ownership of the resolution proof to simultaneously allow for mutable references
+        // to the solver during this function
         let proof_box = self.solver.resolution.take()?;
         let proof = proof_box.deref();
 
-        let mut interpolants: HashMap<i32, XCNF> = HashMap::with_capacity(2 * proof.len() + 1);
+        let mut interpolants = InterpolantStore::new(2 * proof.len() + 1);
 
         // Base case: Annotate root clauses in partition A/B with Bottom/Top
         for A_clause_id in proof.clauses_in_partition(Partition::A) {
@@ -289,7 +311,7 @@ impl BmcModel<'_> {
         for step in proof.resolutions() {
             let I_L: &XCNF = interpolants.get(&step.left).unwrap();
             let I_R: &XCNF = interpolants.get(&step.right).unwrap();
-            debug_assert!(!interpolants.contains_key(&step.resolvent));
+            debug_assert!(interpolants.get(&step.resolvent).is_none());
 
             let pivot_partition = proof.var_partition(step.pivot)?;
             let I_resolvent: XCNF = match pivot_partition {
@@ -414,9 +436,63 @@ impl BmcModel<'_> {
 
         Ok(())
     }
+
+    fn has_sufficient_memory(&self) -> bool {
+        const MIN_AVAILABLE_BYTES : u64 = 7 * 1024 * 1024 * 1024;
+        let mut sys = System::new();
+        sys.refresh_memory();
+
+        #[cfg(debug_assertions)]
+        dbg!(sys.available_memory());
+
+        sys.available_memory() >= MIN_AVAILABLE_BYTES
+    }
+
+    fn check_memory(&self, title: &str) {
+        let mut sys = System::new();
+        sys.refresh_memory();
+
+        println!("{}: {}", title, sys.available_memory())
+    }
 }
 
 
+/// Stores an interpolant for a given clause id in a way that efficiently reuses previously added
+/// identical interpolants to save memory.
+struct InterpolantStore {
+    interpolants: HashMap<Literal, XCNF>,
+    clause_to_interpolant: HashMap<i32, Literal>,
+}
+
+impl InterpolantStore {
+    pub fn new(capacity: usize) -> Self {
+        InterpolantStore {
+            interpolants: HashMap::with_capacity(capacity),
+            clause_to_interpolant: HashMap::with_capacity(capacity),
+        }
+    }
+
+    pub fn insert(&mut self, clause_id: i32, interpolant: XCNF) {
+        self.clause_to_interpolant.insert(clause_id, interpolant.out_lit);
+
+        if !self.interpolants.contains_key(&interpolant.out_lit) {
+            self.interpolants.insert(interpolant.out_lit, interpolant);
+        }
+    }
+
+    pub fn get(&self, clause_id: &i32) -> Option<&XCNF> {
+        let itp_literal = self.clause_to_interpolant.get(clause_id)?;
+        self.interpolants.get(itp_literal)
+    }
+
+    pub fn remove(&mut self, clause_id: &i32) -> Option<XCNF> {
+        let itp_literal = self.clause_to_interpolant.remove(clause_id)?;
+        self.interpolants.remove(&itp_literal)
+    }
+}
+
+
+// ================= Unit Tests ================
 #[cfg(debug_assertions)]
 pub fn check_interpolant(bmc: &mut BmcModel, interpolant: &XCNF) {
     let proof = bmc.solver.resolution.take().unwrap();
@@ -430,8 +506,6 @@ pub fn check_interpolant(bmc: &mut BmcModel, interpolant: &XCNF) {
     bmc.solver.resolution = Some(proof);
 }
 
-
-// ================= Unit Tests ================
 #[cfg(test)]
 #[allow(non_snake_case)]
 mod tests {
