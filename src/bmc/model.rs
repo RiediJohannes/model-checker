@@ -6,13 +6,15 @@ use crate::logic::{Clause, Literal, CNF, FALSE, TRUE, XCNF};
 
 use std::collections::HashMap;
 use std::ops::Deref;
-use thiserror::Error;
-
 use sysinfo::System;
+use thiserror::Error;
 
 
 #[cfg(debug_assertions)]
 use crate::bmc::debug;
+
+
+const MIN_AVAILABLE_BYTES : u64 = 1 * 1024 * 1024 * 1024;  // 1 GB
 
 #[derive(Error, Debug)]
 pub enum ModelCheckingError {
@@ -23,6 +25,21 @@ pub enum ModelCheckingError {
     FailedInterpolation(u32, usize),
 
     #[error("Program ran out of available memory")]
+    OutOfMemory
+}
+
+#[derive(Error, Debug)]
+pub enum InterpolationError {
+    #[error("SAT solver had no resolution proof attached")]
+    MissingProof,
+
+    #[error("Clause {0} was missing an interpolant")]
+    MissingInterpolant(i32),
+
+    #[error("Variable {0} has not been assigned to any variable partition (A/B)")]
+    MissingVariablePartition(i32),
+
+    #[error("Program ran out of available memory during interpolation")]
     OutOfMemory
 }
 
@@ -70,24 +87,15 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
     bmc.unwind(k)?;
 
     loop {
-        // if !bmc.has_sufficient_memory() {
-        //     return Err(ModelCheckingError::OutOfMemory);
-        // }
-
-        bmc.check_memory("Before SAT check");
-
         if bmc.check() == ModelConclusion::Safe {
-            bmc.check_memory("After SAT check");
-
-            let itp_s1 = bmc.compute_interpolant()
-                .ok_or(ModelCheckingError::FailedInterpolation(k, bmc.interpolation_count()))?;
-
-            bmc.check_memory("After computing interpolant");
+            let itp_s1 = match bmc.compute_interpolant() {
+                Ok(itp) => itp,
+                Err(InterpolationError::OutOfMemory) => return Err(ModelCheckingError::OutOfMemory),
+                _ => return Err(ModelCheckingError::FailedInterpolation(k, bmc.interpolation_count()))
+            };
 
             #[cfg(debug_assertions)]
             check_interpolant(&mut bmc, &itp_s1);
-
-            bmc.check_memory("After checking interpolant");
 
             // I(s0) <- Rename interpolant I(s1) to I(s0) (talk about states in time step t = 0)
             let itp_s0 = bmc.rename_interpolant(itp_s1);
@@ -99,9 +107,6 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
 
             // Merge new interpolant I^{i+1} with current initial states Q or I^1 or I^2 ... or I^i
             bmc.add_interpolant(itp_s0);
-
-            bmc.check_memory("After fixpoint check");
-            println!();
         } else {
             if bmc.interpolation_count() == 0 {
                 return Ok(PropertyCheck::Fail);
@@ -180,7 +185,6 @@ impl BmcModel<'_> {
             latch_lits.push(init_val);
         }
 
-        // TODO Is this direction of the implication actually necessary?
         latch_lits.push(q0);
         self.solver.add_clause(latch_lits.as_slice());
         self.fixpoint_solver.add_clause(latch_lits.as_slice());
@@ -289,10 +293,10 @@ impl BmcModel<'_> {
     /// according to the Huang-Krajíček-Pudlák interpolation system.
     /// The resulting interpolant will over-approximate the states that satisfy the clauses in [Partition::A].
     #[allow(non_snake_case)]
-    pub fn compute_interpolant(&mut self) -> Option<XCNF> {
+    pub fn compute_interpolant(&mut self) -> Result<XCNF, InterpolationError> {
         // Temporarily take ownership of the resolution proof to simultaneously allow for mutable references
         // to the solver during this function
-        let proof_box = self.solver.resolution.take()?;
+        let proof_box = self.solver.resolution.take().ok_or(InterpolationError::MissingProof)?;
         let proof = proof_box.deref();
 
         let mut interpolants = InterpolantStore::new(2 * proof.len() + 1);
@@ -307,13 +311,19 @@ impl BmcModel<'_> {
         }
 
         // Inductive case: Compute new part. interpolant from previous part. interpolants
-        let mut last = 0;
-        for step in proof.resolutions() {
-            let I_L: &XCNF = interpolants.get(&step.left).unwrap();
-            let I_R: &XCNF = interpolants.get(&step.right).unwrap();
+        let mut last_resolvent = 0;
+        for (i, step) in proof.resolutions().enumerate() {
+            if i % 50 == 0 && !self.has_sufficient_memory() {
+                return Err(InterpolationError::OutOfMemory);
+            }
+
+            let I_L: &XCNF = interpolants.get(&step.left).ok_or(InterpolationError::MissingInterpolant(step.left))?;
+            let I_R: &XCNF = interpolants.get(&step.right).ok_or(InterpolationError::MissingInterpolant(step.right))?;
             debug_assert!(interpolants.get(&step.resolvent).is_none());
 
-            let pivot_partition = proof.var_partition(step.pivot)?;
+            let pivot_partition = proof.var_partition(step.pivot)
+                .ok_or(InterpolationError::MissingVariablePartition(step.pivot.var()))?;
+
             let I_resolvent: XCNF = match pivot_partition {
                 Partition::A => {  // I_L OR I_R
                     self.solver.tseitin_or(I_L, I_R)
@@ -341,13 +351,13 @@ impl BmcModel<'_> {
             // );
 
             interpolants.insert(step.resolvent, I_resolvent);
-            last = step.resolvent;
+            last_resolvent = step.resolvent;
         }
 
         self.solver.resolution = Some(proof_box);   // return proof ownership
 
-        let final_interpolant = interpolants.remove(&last)?;
-        Some(final_interpolant)
+        let final_interpolant = interpolants.remove(&last_resolvent).ok_or(InterpolationError::MissingInterpolant(last_resolvent))?;
+        Ok(final_interpolant)
     }
 
     /// Given an extended CNF interpolant over the state at time step `t = 1`, selectively renames
@@ -438,7 +448,6 @@ impl BmcModel<'_> {
     }
 
     fn has_sufficient_memory(&self) -> bool {
-        const MIN_AVAILABLE_BYTES : u64 = 7 * 1024 * 1024 * 1024;
         let mut sys = System::new();
         sys.refresh_memory();
 
@@ -446,13 +455,6 @@ impl BmcModel<'_> {
         dbg!(sys.available_memory());
 
         sys.available_memory() >= MIN_AVAILABLE_BYTES
-    }
-
-    fn check_memory(&self, title: &str) {
-        let mut sys = System::new();
-        sys.refresh_memory();
-
-        println!("{}: {}", title, sys.available_memory())
     }
 }
 
@@ -474,10 +476,8 @@ impl InterpolantStore {
 
     pub fn insert(&mut self, clause_id: i32, interpolant: XCNF) {
         self.clause_to_interpolant.insert(clause_id, interpolant.out_lit);
-
-        if !self.interpolants.contains_key(&interpolant.out_lit) {
-            self.interpolants.insert(interpolant.out_lit, interpolant);
-        }
+        // Only store the new interpolant if it is not already present in the map
+        self.interpolants.entry(interpolant.out_lit).or_insert(interpolant);
     }
 
     pub fn get(&self, clause_id: &i32) -> Option<&XCNF> {
