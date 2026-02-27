@@ -5,14 +5,14 @@ use crate::logic::resolution::{Partition, VariableLocality::*};
 use crate::logic::solving::{SimpleSolver, Solver};
 use crate::logic::{Literal, FALSE, TRUE, XCNF};
 
+use std::cmp::max;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::ops::Deref;
 use std::path::PathBuf;
 use sysinfo::System;
 use thiserror::Error;
-use std::cmp::max;
-
+use crate::bmc::debug::InputTrace;
 #[cfg(debug_assertions)] use crate::logic::{Clause, CNF};
 
 
@@ -529,6 +529,21 @@ pub fn check_interpolant(bmc: &mut BmcModel, interpolant: &XCNF) {
 }
 
 #[cfg(test)]
+/// Helper function to extract a witness for a given AIG and unwinding budget `k` (if there is one).
+pub fn bmc_find_witness(graph: &AIG, k: u32) -> Option<InputTrace> {
+    let mut bmc = BmcModel::from_aig(graph, k, true).unwrap();
+
+    match bmc.check() {
+        ModelConclusion::Safe => None,
+        ModelConclusion::CounterExample => {
+            let model = bmc.solver.get_model();
+            let trace = debug::extract_input_trace(graph, model.as_slice());
+            Some(trace)
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::cnf;
@@ -557,6 +572,7 @@ mod tests {
             }
         }
     }
+
 
     #[test]
     fn test_interpolant_basic_identity() {

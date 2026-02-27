@@ -1,9 +1,137 @@
 use super::aiger::AIG;
 use crate::logic::VAR_OFFSET;
 
+#[cfg(debug_assertions)] use crate::logic::solving::Solver;
 #[cfg(debug_assertions)] use crate::logic::{CNF, XCNF};
 #[cfg(debug_assertions)] use std::collections::HashSet;
-#[cfg(debug_assertions)] use crate::logic::solving::Solver;
+use std::fmt::Display;
+use std::ops::Deref;
+
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Bool3 {
+    True,
+    False,
+    Undef,
+}
+impl From<i8> for Bool3 {
+    fn from(v: i8) -> Self {
+        match v {
+            1  => Bool3::True,
+            -1 => Bool3::False,
+            _  => Bool3::Undef,
+        }
+    }
+}
+impl Display for Bool3 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Bool3::True  => write!(f, "1"),
+            Bool3::False => write!(f, "0"),
+            Bool3::Undef => write!(f, "x"),
+        }
+    }
+}
+impl PartialEq<i32> for Bool3 {
+    fn eq(&self, num: &i32) -> bool {
+        match self {
+            Bool3::True  => *num == 1,
+            Bool3::False => *num == 0,
+            Bool3::Undef => *num == -1,
+        }
+    }
+}
+impl PartialEq<Bool3> for i32 {
+    fn eq(&self, other: &Bool3) -> bool {
+        other == self
+    }
+}
+
+#[derive(Debug)]
+pub struct InputTrace {
+    trace: Vec<Vec<Bool3>>,
+}
+impl Deref for InputTrace {
+    type Target = Vec<Vec<Bool3>>;
+    fn deref(&self) -> &Self::Target {
+        &self.trace
+    }
+}
+impl<const M: usize, const N: usize> PartialEq<[[i32; N]; M]> for InputTrace {
+    fn eq(&self, reference_matrix: &[[i32; N]; M]) -> bool {
+        if self.len() != M {
+            return false;
+        }
+
+        for (bool_row, num_row) in self.iter().zip(reference_matrix.iter()) {
+            if bool_row.len() != N {
+                return false;
+            }
+
+            for (bool3, num) in bool_row.iter().zip(num_row.iter()) {
+                if *num == Bool3::Undef {
+                    continue;
+                }
+
+                if bool3 != num {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+}
+
+pub fn extract_input_trace(graph: &AIG, model: &[i8]) -> InputTrace {
+    let num_inputs = graph.inputs.len();
+    let vars_per_frame = graph.variables().count();
+
+    // The first variable is the constant bottom
+    let total_vars = model.len().saturating_sub(1);
+    let num_steps = total_vars / vars_per_frame;
+
+    let trace = (0..num_steps)
+        .map(|t| {
+            (0..num_inputs)
+                .map(|i| {
+                    let idx = VAR_OFFSET + t * vars_per_frame + i;
+                    Bool3::from(model.get(idx).copied().unwrap_or(0))
+                })
+                .collect()
+        })
+        .collect();
+
+    InputTrace { trace }
+}
+
+/// Prints the series of inputs to the circuit that lead to the given satisfying assignment.
+pub fn print_input_trace(graph: &AIG, model: &[i8]) {
+    let trace = extract_input_trace(graph, model);
+    let num_i = graph.inputs.len();
+
+    // Header
+    println!("\n=== Input Trace (Counter-Example) ===");
+    print!("{:>4} | ", "t");
+    for i in 0..num_i {
+        print!("In_{:<2} ", i);
+    }
+    println!("\n{:-<5}+{:-<}", "", "-".repeat(num_i * 5));
+
+    // Body
+    for (k, step) in trace.iter().enumerate() {
+        print!("{:>4} | ", k);
+
+        for val in step {
+            // center-align inside 3 spaces to match old formatting
+            print!(" {:^1}  ", val);
+        }
+
+        println!();
+    }
+
+    println!("=====================================\n");
+}
 
 
 #[cfg(debug_assertions)]
@@ -18,9 +146,9 @@ pub fn vars_in_cnf(cnf: &CNF) -> HashSet<i32> {
 }
 
 /// Verifies that the interpolant `I` satisfies the following properties w.r.t. the clause partition `(A, B)`:
-/// - A => I
-/// - B => ~I
-/// - I only contains variables shared between A and B
+/// - `A => I`
+/// - `B => ~I`
+/// - `I` only contains variables shared between A and B
 #[allow(non_snake_case)]
 #[cfg(debug_assertions)]
 pub fn verify_interpolant_properties(interpolant: &XCNF, A_cnf: CNF, B_cnf: CNF, top_var: i32) {
@@ -50,40 +178,4 @@ pub fn verify_interpolant_properties(interpolant: &XCNF, A_cnf: CNF, B_cnf: CNF,
     // Obtain all variables local to some partition (either A or B)
     let local_vars = A_vars.symmetric_difference(&B_vars).cloned().collect();
     assert!(I_vars.is_disjoint(&local_vars), "Interpolant I contained some variables local to either partition A or B!");
-}
-
-/// Prints the series of inputs to the circuit that lead to the given satisfying assignment.
-pub fn print_input_trace(graph: &AIG, model: &[i8]) {
-    let num_i = graph.inputs.len();
-
-    // The first variable is the constant bottom
-    let total_vars = model.len().saturating_sub(1);
-    let vars_per_frame = graph.variables().count();
-    let num_steps = total_vars / vars_per_frame;
-
-    // Header
-    println!("\n=== Input Trace (Counter-Example) ===");
-    print!("{:>4} | ", "t");
-    for i in 0..num_i {
-        print!("In_{:<2} ", i);
-    }
-    println!("\n{:-<5}+{:-<}", "", "-".repeat(num_i * 5));
-
-    for k in 0..num_steps {
-        print!("{:>4} | ", k);
-        for i in 0..num_i {
-            let idx = VAR_OFFSET + (k * vars_per_frame) + i;
-            if let Some(&val) = model.get(idx) {
-                let display = match val {
-                    1  => " 1  ", // True
-                    -1 => " 0  ", // False
-                    0  => " x  ", // Undefined
-                    _  => " !  ", // Should not happen
-                };
-                print!("{}", display);
-            }
-        }
-        println!();
-    }
-    println!("=====================================\n");
 }

@@ -1,6 +1,5 @@
 mod aiger;
 mod model;
-
 mod debug;
 
 
@@ -9,8 +8,9 @@ pub use model::*;
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use super::*;
+    use crate::bmc::debug::InputTrace;
+    use std::path::PathBuf;
 
     fn execute_bmc(aiger_file: &str, k: u32, interpolate: bool, expected_result: PropertyCheck) {
         let aiger_path: PathBuf = aiger_file.into();
@@ -24,6 +24,14 @@ mod tests {
         assert!(result.is_ok(), "Encountered error during model checking: {:?}", result.err());
         assert_eq!(result.unwrap(), expected_result);
     }
+
+    fn find_witness(aiger_file: &str, k: u32) -> InputTrace {
+        let aiger_path: PathBuf = aiger_file.into();
+        let instance = load_model(&aiger_path).expect("Failed to parse test data file");
+
+        bmc_find_witness(&instance, k).expect(&format!("Failed to find witness for AIG = {} with k = {}", aiger_path.display(), k))
+    }
+
 
     #[test]
     fn bounded_counter_ok() {
@@ -39,6 +47,12 @@ mod tests {
         const BOUND: u32 = 9;
 
         execute_bmc(AIGER_FILE, BOUND, false, PropertyCheck::Fail);
+
+        let witness = find_witness(AIGER_FILE, BOUND);
+        let expected_inputs = [
+            [1], [1], [1], [1], [1], [1], [1], [1], [1], [1]
+        ];
+        assert_eq!(witness, expected_inputs);
     }
 
     #[test]
@@ -55,6 +69,12 @@ mod tests {
         const BOUND: u32 = 3;
 
         execute_bmc(AIGER_FILE, BOUND, false, PropertyCheck::Fail);
+
+        let witness = find_witness(AIGER_FILE, BOUND);
+        let expected_inputs = [
+            [1], [0], [1], [-1]
+        ];
+        assert_eq!(witness, expected_inputs);
     }
 
     #[test]
@@ -93,6 +113,12 @@ mod tests {
 
         execute_bmc(AIGER_FILE, 2, true, PropertyCheck::Fail);
         execute_bmc(AIGER_FILE, 20, true, PropertyCheck::Fail);
+
+        let witness = find_witness(AIGER_FILE, 4);
+        let expected_inputs = [
+            [1], [1], [1], [1], [-1]
+        ];
+        assert_eq!(witness, expected_inputs);
     }
 
     #[test]
@@ -117,6 +143,19 @@ mod tests {
         execute_bmc(AIGER_FILE, 7, false, PropertyCheck::Fail);
 
         execute_bmc(AIGER_FILE, 2, true, PropertyCheck::Fail);
+
+        let witness = find_witness(AIGER_FILE, 7);
+        let expected_inputs = [
+            [1, 0, 1, 1],
+            [0, 1, 0, 0],
+            [1, 0, 1, 1],
+            [0, 1, 0, 0],
+            [1, 0, 1, 1],
+            [0, 1, 0, 0],
+            [1, 0, 1, 1],
+            [-1, -1, -1, -1],
+        ];
+        assert_eq!(witness, expected_inputs);
     }
 
     #[test]
@@ -165,6 +204,12 @@ mod tests {
         execute_bmc(AIGER_COMB_SAT, 2, false, PropertyCheck::Fail);
         execute_bmc(AIGER_COMB_SAT, 0, true, PropertyCheck::Fail);
         execute_bmc(AIGER_COMB_SAT, 2, true, PropertyCheck::Fail);
+
+        let witness = find_witness(AIGER_COMB_SAT, 0);
+        let expected_inputs = [
+            [1, 1, 0, 1],
+        ];
+        assert_eq!(witness, expected_inputs);
 
         const AIGER_COMB_UNSAT: &str = "data/combinatorial_unsat.aag";
         execute_bmc(AIGER_COMB_UNSAT, 0, false, PropertyCheck::Ok);
