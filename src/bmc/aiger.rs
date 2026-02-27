@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::str::FromStr;
 use thiserror::Error;
 
@@ -91,7 +92,7 @@ pub struct Latch {
     pub next: Signal,
 }
 
-pub fn parse_aiger_ascii(path: &str) -> Result<AIG, ParseError> {
+pub fn parse_aiger_ascii(path: &PathBuf) -> Result<AIG, ParseError> {
     let file = File::open(path)?;
     let mut lines = BufReader::new(file).lines();
 

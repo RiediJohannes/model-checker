@@ -1,21 +1,24 @@
 mod aiger;
 mod model;
 
+mod debug;
+
+
 pub use model::*;
 
-#[cfg(debug_assertions)]
-mod debug;
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use super::*;
 
     fn execute_bmc(aiger_file: &str, k: u32, interpolate: bool, expected_result: PropertyCheck) {
-        let instance = load_model(aiger_file).expect("Failed to parse test data file");
+        let aiger_path: PathBuf = aiger_file.into();
+        let instance = load_model(&aiger_path).expect("Failed to parse test data file");
 
         let result = match interpolate {
-            false => check_bounded(&instance, k),
-            true => check_interpolated(&instance, k)
+            false => check_bounded(&instance, k, false),
+            true => check_interpolated(&instance, k, false)
         };
 
         assert!(result.is_ok(), "Encountered error during model checking: {:?}", result.err());

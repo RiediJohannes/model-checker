@@ -14,13 +14,17 @@ use std::pin::Pin;
 const BOTTOM: i32 = 0;
 const TOP: i32 = BOTTOM + 1;
 
+/// The ID that the first user-added SAT variable is assigned (smaller IDs are reserved for fixed constants).
 pub const VAR_OFFSET: usize = 1;
+/// A [Literal] representing the constant **true** value (verum).
 pub const TRUE: Literal = Literal::raw(TOP);
+/// A [Literal] representing the constant **false** value (falsum).
 pub const FALSE: Literal = Literal::raw(BOTTOM);
 
 
 /// This submodule defines the contract for functions and types shared across the foreign function interface (FFI)
-/// between Rust and C++.
+/// between Rust and C++. The CXX-Bridge library ensures that all types and functions defined within
+/// this module are correctly cross-compiled and linked between the Rust and C++ part of this application.
 #[cxx::bridge]
 pub mod ffi {
     // Shared structs, whose fields will be visible to both languages
@@ -50,7 +54,7 @@ pub mod ffi {
         fn getModel(self: Pin<&mut SolverStub>) -> UniquePtr<CxxVector<i8>>;
     }
 
-    // Rust functions visible in C++
+    // Rust type names and functions visible to C++
     extern "Rust" {
         type ResolutionProof;
         fn notify_clause(self: &mut ResolutionProof, id: u32, lits: &[i32]);

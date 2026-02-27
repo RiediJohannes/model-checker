@@ -1,8 +1,12 @@
 use super::aiger::AIG;
-use crate::logic::solving::Solver;
-use crate::logic::{CNF, VAR_OFFSET, XCNF};
-use std::collections::HashSet;
+use crate::logic::VAR_OFFSET;
 
+#[cfg(debug_assertions)] use crate::logic::{CNF, XCNF};
+#[cfg(debug_assertions)] use std::collections::HashSet;
+#[cfg(debug_assertions)] use crate::logic::solving::Solver;
+
+
+#[cfg(debug_assertions)]
 pub fn vars_in_cnf(cnf: &CNF) -> HashSet<i32> {
     let mut vars = HashSet::new();
     for clause in cnf {
@@ -18,6 +22,7 @@ pub fn vars_in_cnf(cnf: &CNF) -> HashSet<i32> {
 /// - B => ~I
 /// - I only contains variables shared between A and B
 #[allow(non_snake_case)]
+#[cfg(debug_assertions)]
 pub fn verify_interpolant_properties(interpolant: &XCNF, A_cnf: CNF, B_cnf: CNF, top_var: i32) {
     // Property 1: A => I, or equivalently (A and ~I) is UNSAT
     let mut solver_a = Solver::new();

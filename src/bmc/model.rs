@@ -1,5 +1,6 @@
 use crate::bmc::aiger;
 use crate::bmc::aiger::{AndGate, Latch, ParseError, Signal, AIG};
+use crate::bmc::debug;
 use crate::logic::resolution::{Partition, VariableLocality::*};
 use crate::logic::solving::{SimpleSolver, Solver};
 use crate::logic::{Literal, FALSE, TRUE, XCNF};
@@ -7,10 +8,10 @@ use crate::logic::{Literal, FALSE, TRUE, XCNF};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::ops::Deref;
+use std::path::PathBuf;
 use sysinfo::System;
 use thiserror::Error;
 
-#[cfg(debug_assertions)] use crate::bmc::debug;
 #[cfg(debug_assertions)] use crate::logic::{Clause, CNF};
 
 
@@ -61,11 +62,11 @@ impl Display for PropertyCheck {
 }
 
 
-pub fn load_model(name: &str) -> Result<AIG, ParseError> {
+pub fn load_model(name: &PathBuf) -> Result<AIG, ParseError> {
     aiger::parse_aiger_ascii(name)
 }
 
-pub fn check_bounded(graph: &AIG, k: u32) -> Result<PropertyCheck, ModelCheckingError> {
+pub fn check_bounded(graph: &AIG, k: u32, verbose: bool) -> Result<PropertyCheck, ModelCheckingError> {
     // Single iteration of bounded model checking
     let mut bmc = BmcModel::from_aig(graph, k)?;
 
@@ -73,16 +74,21 @@ pub fn check_bounded(graph: &AIG, k: u32) -> Result<PropertyCheck, ModelChecking
         ModelConclusion::Safe => PropertyCheck::Ok,
         ModelConclusion::CounterExample => PropertyCheck::Fail
     };
+
+    if verbose && output == PropertyCheck::Fail {
+        let model = bmc.solver.get_model();
+        debug::print_input_trace(graph, model.as_slice());
+    }
+
     Ok(output)
 }
 
-pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyCheck, ModelCheckingError> {
+pub fn check_interpolated(graph: &AIG, initial_bound: u32, verbose: bool) -> Result<PropertyCheck, ModelCheckingError> {
     let mut k = initial_bound;
     let mut bmc = BmcModel::from_aig(graph, k)?;
 
     loop {
-        #[cfg(debug_assertions)]
-        println!("k = {} | interpolants: {}", k, bmc.interpolation_count);
+        if verbose { println!("k = {} | interpolants: {}", k, bmc.interpolation_count); }
 
         if bmc.check() == ModelConclusion::Safe {
             let itp_s1 = match bmc.compute_interpolant() {
@@ -96,6 +102,7 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
 
             // I(s0) <- Rename interpolant I(s1) to I(s0) (talk about states in time step t = 0)
             let itp_s0 = bmc.rename_interpolant(itp_s1);
+            // println!("I(s0) = {:?}", itp_s0);
 
             // Fixpoint Check
             if bmc.check_fixpoint(&itp_s0) {
@@ -106,12 +113,19 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
             bmc.add_interpolant(itp_s0);
         } else {
             if bmc.interpolation_count == 0 {
+                if verbose {
+                    let model = bmc.solver.get_model();
+                    debug::print_input_trace(graph, model.as_slice());
+                }
+
                 return Ok(PropertyCheck::Fail);
             }
 
             // Increase k by one step and start BMC from scratch (discard all interpolants)
             k += 1;
             bmc = BmcModel::from_aig(graph, k)?;
+
+            if verbose { println!("---"); }
         }
     }
 }
@@ -119,10 +133,10 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32) -> Result<PropertyChe
 pub struct BmcModel<'a> {
     graph: &'a AIG,
     time_steps: Vec<HashMap<u32, Literal>>,
-    interpolation_count: usize,
-    assumption_lit: Option<Literal>,
     solver: Solver,
-    fixpoint_solver: SimpleSolver
+    assumption_lit: Option<Literal>,
+    interpolation_count: usize,
+    fixpoint_solver: SimpleSolver,
 }
 
 impl BmcModel<'_> {
@@ -268,7 +282,7 @@ impl BmcModel<'_> {
             //     => {:?}\n",
             //     proof.get_clause(step.left).unwrap(), &I_L,
             //     proof.get_clause(step.right).unwrap(), &I_R,
-            //     &step.pivot, &pivot_partition, &I_resolvent
+            //     &step.pivot, &pivot_locality, &I_resolvent
             // );
 
             interpolants.insert(step.resolvent, I_resolvent);

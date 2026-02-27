@@ -3,38 +3,54 @@
 mod logic;
 mod bmc;
 
-use std::process;
 use clap::Parser;
-
+use std::path::PathBuf;
+use std::process;
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(author, about, long_about = None)]
 struct Args {
     /// Number of unwinding steps to the transition relation
     k: u32,
+
     /// Path to an AIGER file in ASCII format (*.aag)
-    file_path: String,
-    #[clap(long, short, action)]
+    #[clap(value_name = "AAG_FILE", value_parser = clap::value_parser!(PathBuf))]
+    file_path: PathBuf,
+
+    /// Use this flag to perform bounded model checking incrementally (automatically increasing
+    /// unwinding depth k) with interpolation-based fixpoint detection.
+    #[clap(long, short = 'i', action)]
     interpolate: bool,
+
+    /// Add some additional print statements during checking.
+    #[clap(long, short = 'v', action)]
+    verbose: bool,
 }
 
 
 fn main() {
+    #[cfg(not(debug_assertions))]
+    let args = Args::parse();
+    #[cfg(debug_assertions)]
     let mut args = Args::parse();
 
-    let aiger_file = "data/count10.aag";  // args.file_path
-    // let aiger_file = "./../ascii/texas_ifetch_3.aag";  // args.file_path
-    let k: u32 = 3; // args.k
-    args.interpolate = true;
+    #[cfg(debug_assertions)]
+    {
+        args.file_path = "data/safe.aag".into();
+        // args.file_path ="./../ascii/texas_ifetch_3.aag".into();
+        args.k = 1;
+        args.interpolate = true;
+        args.verbose = true;
+    }
 
-    let instance = bmc::load_model(aiger_file).unwrap_or_else(|e| {
+    let instance = bmc::load_model(&args.file_path).unwrap_or_else(|e| {
         eprintln!("Parsing error: {e}");
         process::exit(1);
     });
 
     let checking_result = match args.interpolate {
-        false => bmc::check_bounded(&instance, k),
-        true => bmc::check_interpolated(&instance, k)
+        false => bmc::check_bounded(&instance, args.k, args.verbose),
+        true => bmc::check_interpolated(&instance, args.k, args.verbose)
     };
 
     match checking_result {
