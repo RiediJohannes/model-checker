@@ -36,9 +36,9 @@ fn main() {
 
     #[cfg(debug_assertions)]
     {
-        args.file_path = "data/safe.aag".into();
-        // args.file_path ="./../ascii/texas_ifetch_3.aag".into();
-        args.k = 1;
+        // args.file_path = "data/safe.aag".into();
+        args.file_path ="./../ascii/texas_ifetch_3.aag".into();
+        args.k = 10;
         args.interpolate = true;
         args.verbose = true;
     }

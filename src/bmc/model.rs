@@ -102,7 +102,6 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32, verbose: bool) -> Res
 
             // I(s0) <- Rename interpolant I(s1) to I(s0) (talk about states in time step t = 0)
             let itp_s0 = bmc.rename_interpolant(itp_s1);
-            // println!("I(s0) = {:?}", itp_s0);
 
             // Fixpoint Check
             if bmc.check_fixpoint(&itp_s0) {

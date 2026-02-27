@@ -200,6 +200,9 @@ impl Solver {
             return (*right).clone();
         } else if right == &FALSE {
             return (*left).clone();
+        } else if left.out_lit == right.out_lit {
+            debug_assert_eq!(left.formula, right.formula);
+            return (*left).clone();
         }
 
         let tseitin_lit: Literal = self.add_var();
@@ -224,6 +227,9 @@ impl Solver {
         } else if left == &TRUE {
             return (*right).clone();
         } else if right == &TRUE {
+            return (*left).clone();
+        }  else if left.out_lit == right.out_lit {
+            debug_assert_eq!(left.formula, right.formula);
             return (*left).clone();
         }
 
