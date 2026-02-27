@@ -82,9 +82,9 @@ mod tests {
     }
 
     #[test]
+    /// Again the 4-bit counter counting to a number >= 10, but this time
+    /// the third bit is stuck on forever true => we reach a counterexample more quickly
     fn counter_3rd_bit_on() {
-        // Again the 4-bit counter counting to a number >= 10, but this time
-        // the third bit is stuck on forever true => we reach a counterexample more quickly
         const AIGER_FILE: &str = "data/count10_3rd_bit_on.aag";
 
         // We already fail in 4 steps
@@ -96,9 +96,9 @@ mod tests {
     }
 
     #[test]
+    /// Again the 4-bit counter counting to a number >= 10, but this time
+    /// the third bit is stuck on forever false => we can never count to 10 or higher
     fn counter_3rd_bit_off() {
-        // Again the 4-bit counter counting to a number >= 10, but this time
-        // the third bit is stuck on forever false => we can never count to 10 or higher
         const AIGER_FILE: &str = "data/count10_3rd_bit_off.aag";
 
         // We never fail
@@ -132,8 +132,8 @@ mod tests {
     }
 
     #[test]
+    /// Special circuit that can only ever be violated in the initial state s0
     fn violated_in_initial_state() {
-        // Special circuit that can only ever be violated in the initial state s0
         const AIGER_FILE: &str = "data/one_shot.aag";
 
         execute_bmc(AIGER_FILE, 0, false, PropertyCheck::Fail);
@@ -145,9 +145,9 @@ mod tests {
     }
 
     #[test]
+    /// Check if the model checker correctly handles the special case of 0 unwindings
+    /// of the transition relation
     fn no_unwinding() {
-        // Check if the model checker correctly handles the special case of 0 unwindings
-        // of the transition relation
         const AIGER_FILE_FAIL: &str = "data/combination.aag";
         execute_bmc(AIGER_FILE_FAIL, 0, false, PropertyCheck::Ok);
         execute_bmc(AIGER_FILE_FAIL, 0, true, PropertyCheck::Fail);
@@ -158,8 +158,8 @@ mod tests {
     }
 
     #[test]
+    /// Check if the model checker correctly handles purely combinatorial circuits (no latches)
     fn combinatorial_circuits() {
-        // Check if the model checker correctly handles purely combinatorial circuits (no latches)
         const AIGER_COMB_SAT: &str = "data/combinatorial_sat.aag";
         execute_bmc(AIGER_COMB_SAT, 0, false, PropertyCheck::Fail);
         execute_bmc(AIGER_COMB_SAT, 2, false, PropertyCheck::Fail);
@@ -171,5 +171,30 @@ mod tests {
         execute_bmc(AIGER_COMB_UNSAT, 0, false, PropertyCheck::Ok);
         execute_bmc(AIGER_COMB_UNSAT, 2, true, PropertyCheck::Ok);
         execute_bmc(AIGER_COMB_UNSAT, 2, true, PropertyCheck::Ok);
+    }
+
+    #[test]
+    /// 6-bit counter that violates the property if it overflows (counts to 64)
+    fn counter_6bit() {
+        const AIGER_COMB_SAT: &str = "data/counter_6bit.aag";
+
+        execute_bmc(AIGER_COMB_SAT, 62, false, PropertyCheck::Ok);
+        execute_bmc(AIGER_COMB_SAT, 63, false, PropertyCheck::Fail);
+
+        execute_bmc(AIGER_COMB_SAT, 55, true, PropertyCheck::Fail);
+    }
+
+    #[test]
+    /// 6-bit counter that violates the property if it overflows (counts to 64),
+    /// BUT it can never reach this state (saturates).
+    fn saturating_counter_6bit() {
+        const AIGER_COMB_SAT: &str = "data/saturating_counter_6bit.aag";
+
+        execute_bmc(AIGER_COMB_SAT, 60, false, PropertyCheck::Ok);
+        execute_bmc(AIGER_COMB_SAT, 70, false, PropertyCheck::Ok);
+
+        execute_bmc(AIGER_COMB_SAT, 5, true, PropertyCheck::Ok);
+        execute_bmc(AIGER_COMB_SAT, 55, true, PropertyCheck::Ok);
+        execute_bmc(AIGER_COMB_SAT, 70, true, PropertyCheck::Ok);
     }
 }
