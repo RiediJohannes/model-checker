@@ -75,8 +75,8 @@ pub fn print_input_trace(graph: &AIG, model: &[i8]) {
             let idx = VAR_OFFSET + (k * vars_per_frame) + i;
             if let Some(&val) = model.get(idx) {
                 let display = match val {
-                    1  => " T  ", // True
-                    -1 => " F  ", // False
+                    1  => " 1  ", // True
+                    -1 => " 0  ", // False
                     0  => " x  ", // Undefined
                     _  => " !  ", // Should not happen
                 };

@@ -80,4 +80,54 @@ mod tests {
 
         execute_bmc(AIGER_FILE, BOUND, true, PropertyCheck::Ok);
     }
+
+    #[test]
+    fn counter_3rd_bit_on() {
+        // Again the 4-bit counter counting to a number >= 10, but this time
+        // the third bit is stuck on forever true => we reach a counterexample more quickly
+        const AIGER_FILE: &str = "data/count10_3rd_bit_on.aag";
+
+        // We already fail in 4 steps
+        execute_bmc(AIGER_FILE, 3, false, PropertyCheck::Ok);
+        execute_bmc(AIGER_FILE, 4, false, PropertyCheck::Fail);
+
+        execute_bmc(AIGER_FILE, 2, true, PropertyCheck::Fail);
+        execute_bmc(AIGER_FILE, 20, true, PropertyCheck::Fail);
+    }
+
+    #[test]
+    fn counter_3rd_bit_off() {
+        // Again the 4-bit counter counting to a number >= 10, but this time
+        // the third bit is stuck on forever false => we can never count to 10 or higher
+        const AIGER_FILE: &str = "data/count10_3rd_bit_off.aag";
+
+        // We never fail
+        execute_bmc(AIGER_FILE, 10, false, PropertyCheck::Ok);
+        execute_bmc(AIGER_FILE, 100, false, PropertyCheck::Ok);
+
+        execute_bmc(AIGER_FILE, 2, true, PropertyCheck::Ok);
+        execute_bmc(AIGER_FILE, 20, true, PropertyCheck::Ok);
+    }
+
+    #[test]
+    fn multi_input_alternating() {
+        const AIGER_FILE: &str = "data/multi_input_alternating.aag";
+
+        execute_bmc(AIGER_FILE, 6, false, PropertyCheck::Ok);
+        execute_bmc(AIGER_FILE, 7, false, PropertyCheck::Fail);
+
+        execute_bmc(AIGER_FILE, 2, true, PropertyCheck::Fail);
+    }
+
+    #[test]
+    fn multi_input_puzzle() {
+        const AIGER_FILE: &str = "data/multi_input_puzzle.aag";
+
+        // Only after 31 time steps and the correct input combination in each step will the property
+        // be violated
+        execute_bmc(AIGER_FILE, 30, false, PropertyCheck::Ok);
+        execute_bmc(AIGER_FILE, 31, false, PropertyCheck::Fail);
+
+        execute_bmc(AIGER_FILE, 2, true, PropertyCheck::Fail);
+    }
 }
