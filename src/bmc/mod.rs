@@ -130,4 +130,16 @@ mod tests {
 
         execute_bmc(AIGER_FILE, 2, true, PropertyCheck::Fail);
     }
+
+    #[test]
+    fn violated_in_initial_state() {
+        // Special circuit that can only ever be violated in the initial state s0
+        const AIGER_FILE: &str = "data/one_shot.aag";
+
+        execute_bmc(AIGER_FILE, 0, false, PropertyCheck::Fail);
+        execute_bmc(AIGER_FILE, 0, true, PropertyCheck::Fail);
+
+        execute_bmc(AIGER_FILE, 4, false, PropertyCheck::Fail);
+        execute_bmc(AIGER_FILE, 4, true, PropertyCheck::Fail);
+    }
 }

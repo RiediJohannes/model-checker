@@ -36,7 +36,7 @@ fn main() {
 
     #[cfg(debug_assertions)]
     {
-        args.file_path = "data/count10.aag".into();
+        args.file_path = "data/one_shot.aag".into();
         // args.file_path ="./../ascii/texas_ifetch_3.aag".into();
         // args.file_path ="./../ascii/texas_ifetch_8.aag".into();
         args.k = 2;

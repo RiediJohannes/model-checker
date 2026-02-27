@@ -68,7 +68,7 @@ pub fn load_model(name: &PathBuf) -> Result<AIG, ParseError> {
 
 pub fn check_bounded(graph: &AIG, k: u32, verbose: bool) -> Result<PropertyCheck, ModelCheckingError> {
     // Single iteration of bounded model checking
-    let mut bmc = BmcModel::from_aig(graph, k)?;
+    let mut bmc = BmcModel::from_aig(graph, k, true)?;
 
     let output = match bmc.check() {
         ModelConclusion::Safe => PropertyCheck::Ok,
@@ -84,8 +84,13 @@ pub fn check_bounded(graph: &AIG, k: u32, verbose: bool) -> Result<PropertyCheck
 }
 
 pub fn check_interpolated(graph: &AIG, initial_bound: u32, verbose: bool) -> Result<PropertyCheck, ModelCheckingError> {
+    // First, check if the property can be violated within the initial state s0
+    if let PropertyCheck::Fail = check_bounded(graph, 0, verbose)? {
+        return Ok(PropertyCheck::Fail);
+    }
+
     let mut k = initial_bound;
-    let mut bmc = BmcModel::from_aig(graph, k)?;
+    let mut bmc = BmcModel::from_aig(graph, k, false)?;
 
     loop {
         if verbose { println!("k = {} | interpolants: {}", k, bmc.interpolation_count); }
@@ -122,7 +127,7 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32, verbose: bool) -> Res
 
             // Increase k by one step and start BMC from scratch (discard all interpolants)
             k += 1;
-            bmc = BmcModel::from_aig(graph, k)?;
+            bmc = BmcModel::from_aig(graph, k, false)?;
 
             if verbose { println!("---"); }
         }
@@ -143,7 +148,7 @@ impl BmcModel<'_> {
     /// Creates a new bounded model checking (BMC) instance from an And-Inverter Graph (AIG).
     /// The model immediately initializes all SAT variables needed to express the various circuit
     /// signals in all time steps t in [0, k] and unrolls the transition relation [k] times.
-    pub fn from_aig(graph: &'_ AIG, k: u32) -> Result<BmcModel<'_>, ModelCheckingError> {
+    pub fn from_aig(graph: &'_ AIG, k: u32, include_p0: bool) -> Result<BmcModel<'_>, ModelCheckingError> {
         let mut model = BmcModel {
             graph,
             time_steps: Vec::new(),
@@ -168,11 +173,12 @@ impl BmcModel<'_> {
         // Compute and enforce the exact initial states Q
         model.add_initial_states()?;
         // Unroll the transition relation k times
-        model.unwind(k)?;
+        model.unwind(k, include_p0)?;
 
         Ok(model)
     }
 
+    /// Adds the given interpolant to the solver state in an incremental manner.
     pub fn add_interpolant(&mut self, interpolant: XCNF) {
         self.interpolation_count += 1;
         self.solver.set_partition(Partition::A);
@@ -353,6 +359,7 @@ impl BmcModel<'_> {
             latch_lits.push(init_val);
         }
 
+        // The other direction: All latches are 0 implies q0
         latch_lits.push(q0);
         self.solver.add_clause(latch_lits.as_slice());
         self.fixpoint_solver.add_clause(latch_lits.as_slice());
@@ -369,7 +376,7 @@ impl BmcModel<'_> {
 
     /// Unwinds the transition relation as described by the model's [AIG] graph `k` times
     /// and adds the resulting clauses to the model's state.
-    fn unwind(&'_ mut self, k: u32) -> Result<(), ModelCheckingError> {
+    fn unwind(&'_ mut self, k: u32, include_p0: bool) -> Result<(), ModelCheckingError> {
         self.solver.set_partition(Partition::A);
 
         // We need variables for each input, latch, gate and output at each time step
@@ -390,8 +397,13 @@ impl BmcModel<'_> {
 
         self.solver.set_partition(Partition::B);
 
+        let property_range = match include_p0 {
+            true => 0..=k,
+            false => 1..=k,
+        };
+
         // Assert that the output is true at SOME time step -> property violation
-        let property_violation_clause: Vec<Literal> = (1..=k)
+        let property_violation_clause: Vec<Literal> = property_range
             .map(|t| self.signal_at_time(&self.graph.outputs[0], t))
             .collect::<Result<_, _>>()?;
 
