@@ -11,6 +11,7 @@ use std::ops::Deref;
 use std::path::PathBuf;
 use sysinfo::System;
 use thiserror::Error;
+use std::cmp::max;
 
 #[cfg(debug_assertions)] use crate::logic::{Clause, CNF};
 
@@ -89,7 +90,7 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32, verbose: bool) -> Res
         return Ok(PropertyCheck::Fail);
     }
 
-    let mut k = initial_bound;
+    let mut k = max(initial_bound, 1);
     let mut bmc = BmcModel::from_aig(graph, k, false)?;
 
     loop {

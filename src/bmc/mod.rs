@@ -139,7 +139,37 @@ mod tests {
         execute_bmc(AIGER_FILE, 0, false, PropertyCheck::Fail);
         execute_bmc(AIGER_FILE, 0, true, PropertyCheck::Fail);
 
+        // This is still detected for higher k
         execute_bmc(AIGER_FILE, 4, false, PropertyCheck::Fail);
         execute_bmc(AIGER_FILE, 4, true, PropertyCheck::Fail);
+    }
+
+    #[test]
+    fn no_unwinding() {
+        // Check if the model checker correctly handles the special case of 0 unwindings
+        // of the transition relation
+        const AIGER_FILE_FAIL: &str = "data/combination.aag";
+        execute_bmc(AIGER_FILE_FAIL, 0, false, PropertyCheck::Ok);
+        execute_bmc(AIGER_FILE_FAIL, 0, true, PropertyCheck::Fail);
+
+        const AIGER_FILE_SAFE: &str = "data/safe.aag";
+        execute_bmc(AIGER_FILE_SAFE, 0, false, PropertyCheck::Ok);
+        execute_bmc(AIGER_FILE_SAFE, 0, true, PropertyCheck::Ok);
+    }
+
+    #[test]
+    fn combinatorial_circuits() {
+        // Check if the model checker correctly handles purely combinatorial circuits (no latches)
+        const AIGER_COMB_SAT: &str = "data/combinatorial_sat.aag";
+        execute_bmc(AIGER_COMB_SAT, 0, false, PropertyCheck::Fail);
+        execute_bmc(AIGER_COMB_SAT, 2, false, PropertyCheck::Fail);
+        execute_bmc(AIGER_COMB_SAT, 0, true, PropertyCheck::Fail);
+        execute_bmc(AIGER_COMB_SAT, 2, true, PropertyCheck::Fail);
+
+        const AIGER_COMB_UNSAT: &str = "data/combinatorial_unsat.aag";
+        execute_bmc(AIGER_COMB_UNSAT, 0, false, PropertyCheck::Ok);
+        execute_bmc(AIGER_COMB_UNSAT, 0, false, PropertyCheck::Ok);
+        execute_bmc(AIGER_COMB_UNSAT, 2, true, PropertyCheck::Ok);
+        execute_bmc(AIGER_COMB_UNSAT, 2, true, PropertyCheck::Ok);
     }
 }
