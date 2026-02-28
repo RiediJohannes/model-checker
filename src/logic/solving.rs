@@ -1,13 +1,13 @@
 pub use ffi::Literal;
-use std::collections::{HashMap, TryReserveError};
-
-use crate::logic::resolution::{Partition, ResolutionProof};
-use crate::logic::types::{Clause, CNF, XCNF};
 
 use crate::cnf;
 use crate::logic::resolution::VariableLocality::{Local, Shared};
+use crate::logic::resolution::{Partition, ResolutionProof};
+use crate::logic::types::{Clause, CNF, XCNF};
+
 use cxx::{CxxVector, UniquePtr};
 use ffi::SolverStub;
+use std::collections::{HashMap, TryReserveError};
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::{Deref, Neg};
 use std::pin::Pin;
@@ -123,13 +123,13 @@ impl From<i32> for Literal {
 
 /// Wrapper around [SolverStub] to offer a more developer-friendly interface and enable proof-logging,
 /// plus some additional methods for logic formula transformations (tseitin transformations).
-pub struct Solver {
+pub struct ProofSolver {
     stub: UniquePtr<SolverStub>,
     pub top_var: i32,   // ID of the highest variable instantiated so far
     pub resolution: Option<Box<ResolutionProof>>,  // IMPORTANT to box this member, otherwise passing its reference to C++ will lead to memory-issues!
 }
 
-impl Solver {
+impl ProofSolver {
     pub fn new() -> Self {
         let mut resolution = Box::new(ResolutionProof::new());
 
@@ -240,16 +240,6 @@ impl Solver {
                     self.tseitin_and_interpolants(left_conjunct, right_conjunct)
                 }
             };
-
-            // println!(
-            //     "C_L = {}\t -> I_L: {}\n\
-            //     C_R = {}\t -> I_R: {}\n\
-            //     -- Resolving on literal {:} (partition: {:?})\n\
-            //     => {}\n",
-            //         proof.get_clause(step.left).unwrap(), &I_L,
-            //         proof.get_clause(step.right).unwrap(), &I_R,
-            //         &step.pivot, &pivot_locality, &I_resolvent
-            // );
 
             interpolation.add_interpolant(step.resolvent, I_resolvent);
         }
@@ -483,10 +473,10 @@ impl From<InterpolationStorage> for XCNF {
 mod tests {
     use crate::cnf;
     use crate::logic::resolution::{Partition, VariableLocality};
-    use crate::logic::solving::{Interpolant, Solver, FALSE, TRUE, VAR_OFFSET};
+    use crate::logic::solving::{Interpolant, ProofSolver, FALSE, TRUE, VAR_OFFSET};
     use crate::logic::{Clause, Literal, XCNF};
 
-    impl Solver {
+    impl ProofSolver {
         /// Helper function to collect the added clause in a Clause struct
         fn add_and_get_clause<L>(&mut self, literals: L) -> Clause
         where L: AsRef<[Literal]>, Clause: From<L> {
@@ -536,9 +526,9 @@ mod tests {
         }
     }
 
-    fn setup_interpolants() -> (Solver, Interpolant, Interpolant) {
+    fn setup_interpolants() -> (ProofSolver, Interpolant, Interpolant) {
         const N_VARS: usize = 4;
-        let mut solver = Solver::new();
+        let mut solver = ProofSolver::new();
         let vars = solver.add_vars(N_VARS);
         let (x, y, z1, z2) = (vars[0], vars[1], vars[2], vars[3]);
 
@@ -553,7 +543,7 @@ mod tests {
     /// currently instantiated in the solver.
     #[test]
     fn top_var_counter() {
-        let mut solver: Solver = Solver::new();
+        let mut solver: ProofSolver = ProofSolver::new();
 
         assert_eq!(solver.top_var, 0);
         assert_eq!(solver.top_var, FALSE.var());
@@ -579,7 +569,7 @@ mod tests {
 
     #[test]
     fn variable_partition() {
-        let mut solver = Solver::new();
+        let mut solver = ProofSolver::new();
 
         let a1 = solver.add_var();
         let a2 = solver.add_var();
@@ -610,7 +600,7 @@ mod tests {
 
     #[test]
     fn clause_partition() {
-        let mut solver = Solver::new();
+        let mut solver = ProofSolver::new();
 
         let x = solver.add_var();
         let y = solver.add_var();
@@ -640,7 +630,7 @@ mod tests {
 
     #[test]
     fn tseitin_or_trivial() {
-        let mut solver = Solver::new();
+        let mut solver = ProofSolver::new();
 
         // Case 1: Trivial TRUE
         let T_or_T = solver.tseitin_or(TRUE, TRUE);
@@ -662,7 +652,7 @@ mod tests {
 
     #[test]
     fn tseitin_and_trivial() {
-        let mut solver = Solver::new();
+        let mut solver = ProofSolver::new();
 
         // Case 1: Trivial TRUE
         let T_and_T = solver.tseitin_and(TRUE, TRUE);
@@ -684,7 +674,7 @@ mod tests {
 
     #[test]
     fn tseitin_or_literals() {
-        let mut solver = Solver::new();
+        let mut solver = ProofSolver::new();
         let I1 = Interpolant::Literal(solver.add_var());
         let I2 = Interpolant::Literal(solver.add_var());
 
@@ -738,7 +728,7 @@ mod tests {
 
     #[test]
     fn tseitin_and_literals() {
-        let mut solver = Solver::new();
+        let mut solver = ProofSolver::new();
         let I1 = Interpolant::Literal(solver.add_var());
         let I2 = Interpolant::Literal(solver.add_var());
 

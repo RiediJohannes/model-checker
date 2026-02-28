@@ -5,6 +5,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::ops::{BitAnd, Index};
 use super::solving::Literal;
 
+
 #[derive(Clone, Eq)]
 pub struct Clause {
     lits: Box<[Literal]>,

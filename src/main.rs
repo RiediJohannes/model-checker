@@ -27,18 +27,7 @@ struct Args {
 
 
 fn main() {
-    #[cfg(not(debug_assertions))]
     let args = Args::parse();
-    #[cfg(debug_assertions)]
-    let mut args = Args::parse();
-
-    #[cfg(debug_assertions)]
-    {
-        args.file_path = "data/counter_6bit.aag".into();
-        args.k = 55;
-        args.interpolate = true;
-        args.verbose = true;
-    }
 
     let instance = bmc::load_model(&args.file_path).unwrap_or_else(|e| {
         eprintln!("Parsing error: {e}");

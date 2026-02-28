@@ -20,9 +20,7 @@ fn main() {
         .flag("-Wno-strict-aliasing")
         .compile("cxx-minisat");
 
-    // println!("cargo:rustc-link-search=native=clib");
-    // println!("cargo:rustc-link-clib=static=minisat");
-
+    // Files to watch for potential recompilation of the C++ code
     println!("cargo:rerun-if-changed=src/logic/minisat/Solver.C");
     println!("cargo:rerun-if-changed=src/logic/minisat/Proof.C");
     println!("cargo:rerun-if-changed=src/logic/minisat/Stub.C");

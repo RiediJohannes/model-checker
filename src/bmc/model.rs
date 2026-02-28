@@ -2,7 +2,7 @@ use crate::bmc::aiger;
 use crate::bmc::aiger::{AndGate, Latch, ParseError, Signal, AIG};
 use crate::bmc::debug;
 use crate::logic::resolution::Partition;
-use crate::logic::solving::{InterpolationError, SimpleSolver, Solver};
+use crate::logic::solving::{InterpolationError, ProofSolver, SimpleSolver};
 use crate::logic::{Literal, FALSE, TRUE, XCNF};
 
 use std::cmp::max;
@@ -60,7 +60,7 @@ pub fn check_bounded(graph: &AIG, k: u32, verbose: bool) -> Result<PropertyCheck
 
     if verbose && output == PropertyCheck::Fail {
         let model = bmc.solver.get_model();
-        debug::print_input_trace(graph, model.as_slice());
+        debug::print_input_trace(graph, k, model.as_slice());
     }
 
     Ok(output)
@@ -102,7 +102,7 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32, verbose: bool) -> Res
             if bmc.interpolation_count == 0 {
                 if verbose {
                     let model = bmc.solver.get_model();
-                    debug::print_input_trace(graph, model.as_slice());
+                    debug::print_input_trace(graph, k, model.as_slice());
                 }
 
                 return Ok(PropertyCheck::Fail);
@@ -120,7 +120,7 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32, verbose: bool) -> Res
 pub struct BmcModel<'a> {
     graph: &'a AIG,
     time_steps: Vec<HashMap<u32, Literal>>,
-    solver: Solver,
+    solver: ProofSolver,
     assumption_lit: Option<Literal>,
     interpolation_count: usize,
     fixpoint_solver: SimpleSolver,
@@ -137,7 +137,7 @@ impl BmcModel<'_> {
             time_steps: Vec::new(),
             interpolation_count: 0,
             assumption_lit: None,
-            solver: Solver::new(),
+            solver: ProofSolver::new(),
             fixpoint_solver: SimpleSolver::new()
         };
 
@@ -199,15 +199,7 @@ impl BmcModel<'_> {
 
         // If the formula is SAT, the model's property was violated
         match is_sat {
-            true => {
-                #[cfg(debug_assertions)]
-                {
-                    let model = self.solver.get_model();
-                    debug::print_input_trace(self.graph, model.as_slice());
-                }
-
-                ModelConclusion::CounterExample
-            },
+            true => ModelConclusion::CounterExample,
             false => ModelConclusion::Safe
         }
     }
@@ -405,7 +397,7 @@ pub fn bmc_find_witness(graph: &AIG, k: u32) -> Option<InputTrace> {
         ModelConclusion::Safe => None,
         ModelConclusion::CounterExample => {
             let model = bmc.solver.get_model();
-            let trace = debug::extract_input_trace(graph, model.as_slice());
+            let trace = debug::extract_input_trace(graph, k, model.as_slice());
             Some(trace)
         }
     }
@@ -435,7 +427,7 @@ mod tests {
                 time_steps: Vec::new(),
                 interpolation_count: 0,
                 assumption_lit: None,
-                solver: Solver::new(),
+                solver: ProofSolver::new(),
                 fixpoint_solver: SimpleSolver::new(),
             }
         }

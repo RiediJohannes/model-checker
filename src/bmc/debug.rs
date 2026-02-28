@@ -1,9 +1,9 @@
 use super::aiger::AIG;
-use crate::logic::solving::SimpleSolver;
 use crate::logic::VAR_OFFSET;
 use std::fmt::Display;
 use std::ops::Deref;
 
+#[cfg(debug_assertions)] use crate::logic::solving::SimpleSolver;
 #[cfg(debug_assertions)] use crate::logic::{CNF, XCNF};
 #[cfg(debug_assertions)] use std::collections::HashSet;
 
@@ -83,19 +83,15 @@ impl<const M: usize, const N: usize> PartialEq<[[i32; N]; M]> for InputTrace {
     }
 }
 
-pub fn extract_input_trace(graph: &AIG, model: &[i8]) -> InputTrace {
+pub fn extract_input_trace(graph: &AIG, unwinding_depth: u32, model: &[i8]) -> InputTrace {
     let num_inputs = graph.inputs.len();
     let vars_per_frame = graph.variables().count();
 
-    // The first variable is the constant bottom
-    let total_vars = model.len().saturating_sub(1);
-    let num_steps = total_vars / vars_per_frame;
-
-    let trace = (0..num_steps)
+    let trace = (0..=unwinding_depth)
         .map(|t| {
             (0..num_inputs)
                 .map(|i| {
-                    let idx = VAR_OFFSET + t * vars_per_frame + i;
+                    let idx = VAR_OFFSET + (t as usize) * vars_per_frame + i;
                     Bool3::from(model.get(idx).copied().unwrap_or(0))
                 })
                 .collect()
@@ -106,8 +102,8 @@ pub fn extract_input_trace(graph: &AIG, model: &[i8]) -> InputTrace {
 }
 
 /// Prints the series of inputs to the circuit that lead to the given satisfying assignment.
-pub fn print_input_trace(graph: &AIG, model: &[i8]) {
-    let trace = extract_input_trace(graph, model);
+pub fn print_input_trace(graph: &AIG, unwinding_depth: u32, model: &[i8]) {
+    let trace = extract_input_trace(graph, unwinding_depth, model);
     let num_i = graph.inputs.len();
 
     // Header

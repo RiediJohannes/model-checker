@@ -9,13 +9,13 @@ pub use types::*;
 
 #[cfg(test)]
 mod tests {
-    use crate::logic::solving::Solver;
+    use crate::logic::solving::ProofSolver;
     use crate::logic::{FALSE, TRUE, VAR_OFFSET};
 
     /// Checks if the solver meets the expected preconditions upon construction via the new function.
     #[test]
     fn solver_preconditions() {
-        let mut solver: Solver = Solver::new();
+        let mut solver: ProofSolver = ProofSolver::new();
 
         let proof = solver.resolution.as_ref().expect("Solver should have a resolution proof object");
         assert_eq!(proof.partition, None);
@@ -35,7 +35,7 @@ mod tests {
 
     #[test]
     fn solve_sat() {
-        let mut solver: Solver = Solver::new();
+        let mut solver: ProofSolver = ProofSolver::new();
 
         let x = solver.add_var();
         let y = solver.add_var();
@@ -56,7 +56,7 @@ mod tests {
 
     #[test]
     fn solve_unsat() {
-        let mut solver: Solver = Solver::new();
+        let mut solver: ProofSolver = ProofSolver::new();
 
         let x = solver.add_var();
         let y = solver.add_var();
@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn solve_constants() {
         // Check if FALSE works as expected
-        let mut solver: Solver = Solver::new();
+        let mut solver: ProofSolver = ProofSolver::new();
         let x = solver.add_var();
 
         solver.add_clause([x, FALSE]);
@@ -82,7 +82,7 @@ mod tests {
         assert!(!solver.solve());
 
         // Check if TRUE works as expected
-        let mut solver: Solver = Solver::new();
+        let mut solver: ProofSolver = ProofSolver::new();
         let y = solver.add_var();
 
         solver.add_clause([y, TRUE]);
@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn solve_with_assumptions() {
-        let mut solver: Solver = Solver::new();
+        let mut solver: ProofSolver = ProofSolver::new();
 
         let x = solver.add_var();
         let y = solver.add_var();

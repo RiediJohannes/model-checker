@@ -77,6 +77,7 @@ impl ResolutionProof {
         self.resolution_steps.iter()
     }
 
+    #[cfg(debug_assertions)]
     /// Get a reference to the [Clause] represented by a given clause ID.
     pub fn get_clause(&self, clause_id: i32) -> Option<&Clause> {
         // IDs for root clauses are non-negative integers 0, 1, 2,..., whereas IDs for intermediate clauses
