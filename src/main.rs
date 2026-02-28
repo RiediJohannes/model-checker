@@ -36,9 +36,8 @@ fn main() {
 
     #[cfg(debug_assertions)]
     {
-        args.file_path = "data/count10.aag".into();
-        // args.file_path ="./../ascii/texas_ifetch_8.aag".into();
-        args.k = 3;
+        args.file_path = "data/counter_6bit.aag".into();
+        args.k = 55;
         args.interpolate = true;
         args.verbose = true;
     }

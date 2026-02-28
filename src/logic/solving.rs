@@ -1,13 +1,17 @@
 pub use ffi::Literal;
+use std::collections::{HashMap, TryReserveError};
 
 use crate::logic::resolution::{Partition, ResolutionProof};
 use crate::logic::types::{Clause, CNF, XCNF};
 
+use crate::cnf;
+use crate::logic::resolution::VariableLocality::{Local, Shared};
 use cxx::{CxxVector, UniquePtr};
 use ffi::SolverStub;
 use std::fmt::{Debug, Display, Formatter};
-use std::ops::Neg;
+use std::ops::{Deref, Neg};
 use std::pin::Pin;
+use thiserror::Error;
 
 
 // Fixed IDs to use for SAT variables representing boolean constants
@@ -117,6 +121,103 @@ impl From<i32> for Literal {
 }
 
 
+#[derive(Error, Debug)]
+pub enum InterpolationError {
+    #[error("SAT solver had no resolution proof attached")]
+    MissingProof,
+
+    #[error("Clause {0} was missing an interpolant")]
+    MissingInterpolant(i32),
+
+    #[error("Variable {0} has not been assigned to any variable partition (A/B)")]
+    MissingVariablePartition(i32),
+
+    #[error("Program ran out of available memory during interpolation")]
+    OutOfMemory(#[from] TryReserveError),
+}
+
+#[derive(Debug)]
+pub enum Interpolant {
+    Literal(Literal),
+    Formula(XCNF),
+}
+impl Interpolant {
+    pub fn clauses(&self) -> &[Clause] {
+       match self {
+           Interpolant::Literal(_) => &[] as &[Clause],
+           Interpolant::Formula(xcnf) => xcnf.formula.clauses.as_slice(),
+       }
+    }
+
+    pub fn to_cnf(self) -> CNF {
+        match self {
+            Interpolant::Literal(_) => CNF::from(vec![]),
+            Interpolant::Formula(xcnf) => xcnf.formula,
+        }
+    }
+
+    pub fn literal(&self) -> Literal {
+        match self {
+            Interpolant::Literal(lit) => *lit,
+            Interpolant::Formula(xcnf) => xcnf.out_lit,
+        }
+    }
+}
+impl Display for Interpolant {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Interpolant::Literal(lit) => write!(f, "{}", lit),
+            Interpolant::Formula(xcnf) => write!(f, "{:?}", xcnf),
+        }
+    }
+}
+
+/// Stores the tseitin [Literal] uniquely representing a partial interpolant for each clause id as
+/// well as all the clauses making up the interpolant.
+struct InterpolationStorage {
+    pub mapping: HashMap<i32, Literal>,
+    clause_database: Vec<Clause>,
+    output_literal: Literal,
+}
+
+impl InterpolationStorage {
+    /// Creates a new storage for partial interpolants during algorithmic interpolation with
+    /// sufficient pre-allocated capacities to avoid relocation.
+    /// Note that the construction of this object might fail if the requested memory exceeds
+    /// the memory currently available on the system.
+    /// ## Arguments
+    /// - `proof_size` - The size of the [ResolutionProof] for which an interpolant is computed in terms
+    ///                  of the number of resolution steps in the proof tree.
+    pub fn new(proof_size: usize) -> Result<Self, TryReserveError> {
+        let mut interpolant_mapping = HashMap::new();
+        interpolant_mapping.try_reserve(2 * proof_size + 1)?;
+
+        // Except three tseitin clauses per resolution step
+        let mut clause_vector = Vec::new();
+        clause_vector.try_reserve(3 * proof_size)?;
+
+        Ok(Self {
+            mapping: interpolant_mapping,
+            clause_database: clause_vector,
+            output_literal: TRUE,
+        })
+    }
+
+    pub fn add_interpolant(&mut self, clause_id: i32, interpolant: Interpolant) {
+        let itp_lit = interpolant.literal();
+
+        self.mapping.insert(clause_id, itp_lit);
+        self.clause_database.extend(interpolant.to_cnf().clauses);
+        self.output_literal = itp_lit;
+    }
+}
+impl Into<XCNF> for InterpolationStorage {
+    fn into(self) -> XCNF {
+        XCNF::new(self.clause_database.into(), self.output_literal)
+    }
+}
+
+
 /// Wrapper around [SolverStub] to offer a more developer-friendly interface and enable proof-logging,
 /// plus some additional methods for logic formula transformations (tseitin transformations).
 pub struct Solver {
@@ -134,7 +235,6 @@ impl Solver {
             top_var: -1,
             resolution: Some(resolution),
         };
-
 
         // Add the constant false literal to the solver (in partition A)
         solver.set_partition(Partition::A);
@@ -189,60 +289,126 @@ impl Solver {
         self.remote().getModel()
     }
 
+    /// Computes an interpolant for the two inconsistent partitions `(A, B)` of clauses in the [BmcModel]
+    /// according to the Huang-Krajíček-Pudlák interpolation system.
+    /// The resulting interpolant will over-approximate the states that satisfy the clauses in [Partition::A].
+    #[allow(non_snake_case)]
+    pub fn compute_interpolant(&mut self) -> Result<XCNF, InterpolationError> {
+        // Temporarily take ownership of the resolution proof to simultaneously allow for mutable references
+        // to the solver during this function
+        let proof_box = self.resolution.take().ok_or(InterpolationError::MissingProof)?;
+        let proof = proof_box.deref();
+
+        let mut interpolation = InterpolationStorage::new(proof.len())?;
+
+        // Base case: Annotate root clauses in partition A/B with Bottom/Top
+        for A_clause_id in proof.clauses_in_partition(Partition::A) {
+            interpolation.mapping.insert(*A_clause_id, FALSE);
+        }
+
+        for B_clause_id in proof.clauses_in_partition(Partition::B) {
+            interpolation.mapping.insert(*B_clause_id, TRUE);
+        }
+
+        // Inductive case: Compute new part. interpolant from previous part. interpolants
+        for step in proof.resolutions() {
+            let I_L: Literal = *interpolation.mapping.get(&step.left)
+                .ok_or(InterpolationError::MissingInterpolant(step.left))?;
+            let I_R: Literal = *interpolation.mapping.get(&step.right)
+                .ok_or(InterpolationError::MissingInterpolant(step.right))?;
+            debug_assert!(interpolation.mapping.get(&step.resolvent).is_none());
+
+            let pivot_locality = proof.var_locality(step.pivot)
+                .ok_or(InterpolationError::MissingVariablePartition(step.pivot.var()))?;
+
+            let I_resolvent: Interpolant = match pivot_locality {
+                Local(Partition::A) => {  // I_L OR I_R
+                    self.tseitin_or(I_L, I_R)
+                },
+                Local(Partition::B) => {  // I_L AND I_R
+                    self.tseitin_and(I_L, I_R)
+                },
+                Shared => { // (I_L OR x) AND (I_R OR ~x)
+                    let x = step.pivot;
+                    let left_conjunct = self.tseitin_or(I_L, x);
+                    let right_conjunct = self.tseitin_or(I_R, -x);
+
+                    self.tseitin_and_interpolants(left_conjunct, right_conjunct)
+                }
+            };
+
+            // println!(
+            //     "C_L = {}\t -> I_L: {}\n\
+            //     C_R = {}\t -> I_R: {}\n\
+            //     -- Resolving on literal {:} (partition: {:?})\n\
+            //     => {}\n",
+            //         proof.get_clause(step.left).unwrap(), &I_L,
+            //         proof.get_clause(step.right).unwrap(), &I_R,
+            //         &step.pivot, &pivot_locality, &I_resolvent
+            // );
+
+            interpolation.add_interpolant(step.resolvent, I_resolvent);
+        }
+
+        self.resolution = Some(proof_box);   // return proof ownership
+
+        let final_interpolant: XCNF = interpolation.into();
+        Ok(final_interpolant)
+    }
+
     /// Connects two given propositional formulas in [XCNF] with an **OR-gate** using the tseitin transformation.
     /// The returned [XCNF] object represents a CNF formula that is satisfiable iff the disjunction
     /// of the given parent clauses is satisfiable.
-    pub fn tseitin_or(&mut self, left: &XCNF, right: &XCNF) -> XCNF {
+    pub fn tseitin_or(&mut self, left: Literal, right: Literal) -> Interpolant {
         // Detect trivial cases
-        if left == &TRUE || right == &TRUE {
-            return XCNF::from(TRUE);
-        } else if left == &FALSE {
-            return (*right).clone();
-        } else if right == &FALSE {
-            return (*left).clone();
-        } else if left.out_lit == right.out_lit {
-            debug_assert_eq!(left.formula, right.formula);
-            return (*left).clone();
+        if left == TRUE || right == TRUE {
+            return Interpolant::Literal(TRUE);
+        } else if left == FALSE {
+            return Interpolant::Literal(right);
+        } else if right == FALSE || left == right {
+            return Interpolant::Literal(left);
         }
 
         let tseitin_lit: Literal = self.add_var();
-        let tseitin_clauses: CNF = {
-            let c1 = &Clause::new([-left.out_lit, tseitin_lit]);
-            let c2 = &Clause::new( [-right.out_lit, tseitin_lit]);
-            let c3 = &Clause::new([-tseitin_lit, left.out_lit, right.out_lit]);
-            c1 & c2 & c3
-        };
+        let tseitin_clauses: CNF = cnf![
+            [-left, tseitin_lit],
+            [-right, tseitin_lit],
+            [-tseitin_lit, left, right]
+        ];
 
-        let clauses = &left.formula & &right.formula & &tseitin_clauses;
-        XCNF::new(clauses, tseitin_lit)
+        Interpolant::Formula(XCNF::new(tseitin_clauses, tseitin_lit))
     }
 
     /// Connects two given propositional formulas in [XCNF] with an **AND-gate** using the tseitin transformation.
     /// The returned [XCNF] object represents a CNF formula that is satisfiable iff the conjunction
     /// of the given parent clauses is satisfiable.
-    pub fn tseitin_and(&mut self, left: &XCNF, right: &XCNF) -> XCNF {
+    pub fn tseitin_and(&mut self, left: Literal, right: Literal) -> Interpolant {
         // Detect trivial cases
-        if left == &FALSE || right == &FALSE {
-            return XCNF::from(FALSE);
-        } else if left == &TRUE {
-            return (*right).clone();
-        } else if right == &TRUE {
-            return (*left).clone();
-        }  else if left.out_lit == right.out_lit {
-            debug_assert_eq!(left.formula, right.formula);
-            return (*left).clone();
+        if left == FALSE || right == FALSE {
+            return Interpolant::Literal(FALSE);
+        } else if left == TRUE {
+            return Interpolant::Literal(right);
+        } else if right == TRUE || left == right {
+            return Interpolant::Literal(left);
         }
 
         let tseitin_lit: Literal = self.add_var();
-        let tseitin_clauses: CNF = {
-            let c1 = &Clause::new([-tseitin_lit, left.out_lit]);
-            let c2 = &Clause::new( [-tseitin_lit, right.out_lit]);
-            let c3 = &Clause::new([-left.out_lit, -right.out_lit, tseitin_lit]);
-            c1 & c2 & c3
-        };
+        let tseitin_clauses: CNF = cnf![
+            [-tseitin_lit, left],
+            [-tseitin_lit, right],
+            [-left, -right, tseitin_lit]
+        ];
 
-        let clauses = &left.formula & &right.formula & &tseitin_clauses;
-        XCNF::new(clauses, tseitin_lit)
+        Interpolant::Formula(XCNF::new(tseitin_clauses, tseitin_lit))
+    }
+
+    pub fn tseitin_and_interpolants(&mut self, left_itp: Interpolant, right_itp: Interpolant) -> Interpolant {
+        let conjunction_itp = self.tseitin_and(left_itp.literal(), right_itp.literal());
+
+        let conjunction_lit = conjunction_itp.literal();
+        let combined_clauses = left_itp.to_cnf() & right_itp.to_cnf() & conjunction_itp.to_cnf();
+
+        Interpolant::Formula(XCNF::new(combined_clauses, conjunction_lit))
     }
 
     /// Quick and idiomatic access to a pinned mutable reference of the underlying solver.

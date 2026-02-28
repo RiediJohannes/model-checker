@@ -1,22 +1,19 @@
 use crate::bmc::aiger;
 use crate::bmc::aiger::{AndGate, Latch, ParseError, Signal, AIG};
 use crate::bmc::debug;
-use crate::logic::resolution::{Partition, VariableLocality::*};
-use crate::logic::solving::{SimpleSolver, Solver};
+use crate::logic::resolution::Partition;
+use crate::logic::solving::{InterpolationError, SimpleSolver, Solver};
 use crate::logic::{Literal, FALSE, TRUE, XCNF};
 
 use std::cmp::max;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
-use std::ops::Deref;
 use std::path::PathBuf;
-use sysinfo::System;
 use thiserror::Error;
-use crate::bmc::debug::InputTrace;
+
+#[cfg(test)] use crate::bmc::debug::InputTrace;
 #[cfg(debug_assertions)] use crate::logic::{Clause, CNF};
 
-
-const MIN_AVAILABLE_BYTES : u64 = 1024 * 1024 * 1024;  // 1 GB
 
 #[derive(Error, Debug)]
 pub enum ModelCheckingError {
@@ -27,21 +24,6 @@ pub enum ModelCheckingError {
     FailedInterpolation(u32, usize),
 
     #[error("Program ran out of available memory")]
-    OutOfMemory
-}
-
-#[derive(Error, Debug)]
-pub enum InterpolationError {
-    #[error("SAT solver had no resolution proof attached")]
-    MissingProof,
-
-    #[error("Clause {0} was missing an interpolant")]
-    MissingInterpolant(i32),
-
-    #[error("Variable {0} has not been assigned to any variable partition (A/B)")]
-    MissingVariablePartition(i32),
-
-    #[error("Program ran out of available memory during interpolation")]
     OutOfMemory
 }
 
@@ -97,9 +79,9 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32, verbose: bool) -> Res
         if verbose { println!("k = {} | interpolants: {}", k, bmc.interpolation_count); }
 
         if bmc.check() == ModelConclusion::Safe {
-            let itp_s1 = match bmc.compute_interpolant() {
+            let itp_s1 = match bmc.solver.compute_interpolant() {
                 Ok(itp) => itp,
-                Err(InterpolationError::OutOfMemory) => return Err(ModelCheckingError::OutOfMemory),
+                Err(InterpolationError::OutOfMemory(_)) => return Err(ModelCheckingError::OutOfMemory),
                 _ => return Err(ModelCheckingError::FailedInterpolation(k, bmc.interpolation_count))
             };
 
@@ -110,7 +92,7 @@ pub fn check_interpolated(graph: &AIG, initial_bound: u32, verbose: bool) -> Res
             let itp_s0 = bmc.rename_interpolant(itp_s1);
 
             // Fixpoint Check
-            if bmc.check_fixpoint(&itp_s0) {
+            if bmc.check_fixpoint(&itp_s0, bmc.solver.top_var) {
                 return Ok(PropertyCheck::Ok)
             }
 
@@ -230,77 +212,6 @@ impl BmcModel<'_> {
         }
     }
 
-    /// Computes an interpolant for the two inconsistent partitions `(A, B)` of clauses in the [BmcModel]
-    /// according to the Huang-Krajíček-Pudlák interpolation system.
-    /// The resulting interpolant will over-approximate the states that satisfy the clauses in [Partition::A].
-    #[allow(non_snake_case)]
-    pub fn compute_interpolant(&mut self) -> Result<XCNF, InterpolationError> {
-        // Temporarily take ownership of the resolution proof to simultaneously allow for mutable references
-        // to the solver during this function
-        let proof_box = self.solver.resolution.take().ok_or(InterpolationError::MissingProof)?;
-        let proof = proof_box.deref();
-
-        let mut interpolants = InterpolantStore::new(2 * proof.len() + 1);
-
-        // Base case: Annotate root clauses in partition A/B with Bottom/Top
-        for A_clause_id in proof.clauses_in_partition(Partition::A) {
-            interpolants.insert(*A_clause_id, FALSE.into());
-        }
-
-        for B_clause_id in proof.clauses_in_partition(Partition::B) {
-            interpolants.insert(*B_clause_id, TRUE.into());
-        }
-
-        // Inductive case: Compute new part. interpolant from previous part. interpolants
-        let mut last_resolvent = 0;
-        for (i, step) in proof.resolutions().enumerate() {
-            if i % 50 == 0 && !self.has_sufficient_memory() {
-                return Err(InterpolationError::OutOfMemory);
-            }
-
-            let I_L: &XCNF = interpolants.get(&step.left).ok_or(InterpolationError::MissingInterpolant(step.left))?;
-            let I_R: &XCNF = interpolants.get(&step.right).ok_or(InterpolationError::MissingInterpolant(step.right))?;
-            debug_assert!(interpolants.get(&step.resolvent).is_none());
-
-            let pivot_locality = proof.var_locality(step.pivot)
-                .ok_or(InterpolationError::MissingVariablePartition(step.pivot.var()))?;
-
-            let I_resolvent: XCNF = match pivot_locality {
-                Local(Partition::A) => {  // I_L OR I_R
-                    self.solver.tseitin_or(I_L, I_R)
-                },
-                Local(Partition::B) => {  // I_L AND I_R
-                    self.solver.tseitin_and(I_L, I_R)
-                },
-                Shared => { // (I_L OR x) AND (I_R OR ~x)
-                    let x = step.pivot;
-                    let left_conjunct = self.solver.tseitin_or(I_L, &XCNF::from(x));
-                    let right_conjunct = self.solver.tseitin_or(I_R, &XCNF::from(-x));
-
-                    self.solver.tseitin_and(&left_conjunct, &right_conjunct)
-                }
-            };
-
-            // println!(
-            //     "C_L = {}\t -> I_L: {:?}\n\
-            //     C_R = {}\t -> I_R: {:?}\n\
-            //     -- Resolving on literal {:} (partition: {:?})\n\
-            //     => {:?}\n",
-            //     proof.get_clause(step.left).unwrap(), &I_L,
-            //     proof.get_clause(step.right).unwrap(), &I_R,
-            //     &step.pivot, &pivot_locality, &I_resolvent
-            // );
-
-            interpolants.insert(step.resolvent, I_resolvent);
-            last_resolvent = step.resolvent;
-        }
-
-        self.solver.resolution = Some(proof_box);   // return proof ownership
-
-        let final_interpolant = interpolants.remove(&last_resolvent).ok_or(InterpolationError::MissingInterpolant(last_resolvent))?;
-        Ok(final_interpolant)
-    }
-
     /// Given an extended CNF interpolant over the state at time step `t = 1`, selectively renames
     /// its literals such that the interpolant talks about the state at `t = 0` instead.
     pub fn rename_interpolant(&self, mut interpolant: XCNF) -> XCNF {
@@ -310,8 +221,8 @@ impl BmcModel<'_> {
         interpolant
     }
 
-    pub fn check_fixpoint(&mut self, interpolant: &XCNF) -> bool {
-        for _ in (self.fixpoint_solver.top_var+1)..=interpolant.out_lit.var() {
+    pub fn check_fixpoint(&mut self, interpolant: &XCNF, top_var: i32) -> bool {
+        for _ in (self.fixpoint_solver.top_var+1)..=top_var {
             self.fixpoint_solver.add_var();
         }
 
@@ -465,49 +376,6 @@ impl BmcModel<'_> {
 
         Ok(())
     }
-
-    fn has_sufficient_memory(&self) -> bool {
-        let mut sys = System::new();
-        sys.refresh_memory();
-
-        // #[cfg(debug_assertions)]
-        // dbg!(sys.available_memory());
-
-        sys.available_memory() >= MIN_AVAILABLE_BYTES
-    }
-}
-
-
-/// Stores an interpolant for a given clause id in a way that efficiently reuses previously added
-/// identical interpolants to save memory.
-struct InterpolantStore {
-    interpolants: HashMap<Literal, XCNF>,
-    clause_to_interpolant: HashMap<i32, Literal>,
-}
-
-impl InterpolantStore {
-    pub fn new(capacity: usize) -> Self {
-        InterpolantStore {
-            interpolants: HashMap::with_capacity(capacity),
-            clause_to_interpolant: HashMap::with_capacity(capacity),
-        }
-    }
-
-    pub fn insert(&mut self, clause_id: i32, interpolant: XCNF) {
-        self.clause_to_interpolant.insert(clause_id, interpolant.out_lit);
-        // Only store the new interpolant if it is not already present in the map
-        self.interpolants.entry(interpolant.out_lit).or_insert(interpolant);
-    }
-
-    pub fn get(&self, clause_id: &i32) -> Option<&XCNF> {
-        let itp_literal = self.clause_to_interpolant.get(clause_id)?;
-        self.interpolants.get(itp_literal)
-    }
-
-    pub fn remove(&mut self, clause_id: &i32) -> Option<XCNF> {
-        let itp_literal = self.clause_to_interpolant.remove(clause_id)?;
-        self.interpolants.remove(&itp_literal)
-    }
 }
 
 
@@ -591,7 +459,7 @@ mod tests {
 
         assert!(!bmc.solver.solve(), "Can only compute an interpolant if the partitions (A, B) are inconsistent");
 
-        let itp = bmc.compute_interpolant().expect("Failed to compute interpolant");
+        let itp = bmc.solver.compute_interpolant().expect("Failed to compute interpolant");
         debug::verify_interpolant_properties(&itp, clauses_a, clauses_b, bmc.solver.top_var);
     }
 
@@ -614,7 +482,7 @@ mod tests {
 
         assert!(!bmc.solver.solve(), "Can only compute an interpolant if the partitions (A, B) are inconsistent");
 
-        let itp = bmc.compute_interpolant().expect("Failed to compute interpolant");
+        let itp = bmc.solver.compute_interpolant().expect("Failed to compute interpolant");
         debug::verify_interpolant_properties(&itp, clauses_a, clauses_b, bmc.solver.top_var);
     }
 
@@ -636,7 +504,7 @@ mod tests {
 
         assert!(!bmc.solver.solve(), "Can only compute an interpolant if the partitions (A, B) are inconsistent");
 
-        let itp = bmc.compute_interpolant().expect("Failed to compute interpolant");
+        let itp = bmc.solver.compute_interpolant().expect("Failed to compute interpolant");
         debug::verify_interpolant_properties(&itp, clauses_a, clauses_b, bmc.solver.top_var);
     }
 }

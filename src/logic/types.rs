@@ -175,6 +175,13 @@ impl BitAnd<&CNF> for CNF {
         CNF::from(merged_vec)
     }
 }
+impl BitAnd<CNF> for CNF {
+    type Output = CNF;
+    fn bitand(mut self, rhs: CNF) -> Self::Output {
+        self.clauses.extend(rhs.clauses);
+        self
+    }
+}
 impl BitAnd<&Clause> for &CNF {
     type Output = CNF;
 
