@@ -75,13 +75,6 @@ impl<'a> IntoIterator for &'a Clause {
     }
 }
 
-impl BitAnd<&Clause> for &Clause {
-    type Output = CNF;
-    fn bitand(self, rhs: &Clause) -> Self::Output {
-        CNF::from(vec![self.clone(), rhs.clone()])
-    }
-}
-
 
 #[derive(Clone, Default)]
 pub struct CNF {
@@ -156,16 +149,6 @@ impl<'a> IntoIterator for &'a CNF {
     }
 }
 #[allow(clippy::suspicious_arithmetic_impl)]
-impl BitAnd<&Clause> for CNF {
-    type Output = CNF;
-    fn bitand(self, rhs: &Clause) -> Self::Output {
-        let mut merged_vec = Vec::with_capacity(self.clauses.len() + 1);
-        merged_vec.extend_from_slice(&self.clauses);
-        merged_vec.push(rhs.clone());
-        CNF::from(merged_vec)
-    }
-}
-#[allow(clippy::suspicious_arithmetic_impl)]
 impl BitAnd<&CNF> for CNF {
     type Output = CNF;
     fn bitand(self, rhs: &CNF) -> Self::Output {
@@ -180,13 +163,6 @@ impl BitAnd<CNF> for CNF {
     fn bitand(mut self, rhs: CNF) -> Self::Output {
         self.clauses.extend(rhs.clauses);
         self
-    }
-}
-impl BitAnd<&Clause> for &CNF {
-    type Output = CNF;
-
-    fn bitand(self, rhs: &Clause) -> Self::Output {
-        self.clone() & rhs
     }
 }
 impl BitAnd<&CNF> for &CNF {
@@ -208,6 +184,15 @@ impl CNF {
     }
 }
 
+/// Convenient declarative macro to create a [CNF] struct in a very intuitive syntax.
+/// ## Example
+/// ```
+/// let formula = cnf![
+///     [-x, y],
+///     [-x, z],
+///     [-y, -z, x],
+/// ];
+/// ```
 #[macro_export]
 macro_rules! cnf {
     ( $( [ $( $lit:expr ),* ] ),* ) => {
@@ -337,36 +322,5 @@ mod tests {
         assert_eq!(&result.clauses[0], &left_cnf.clauses[0]);
         assert_eq!(&result.clauses[1], &right_cnf.clauses[0]);
         assert_eq!(&result.clauses[2], &right_cnf.clauses[1]);
-    }
-
-    #[test]
-    fn cnf_and_clause() {
-        let a = Literal::from_var(1);
-        let b = Literal::from_var(2);
-        let c = Literal::from_var(3);
-
-        let cnf = cnf![[a, b], [-b]];
-        let clause = Clause::from([a, c]);
-
-        let result: CNF = &cnf & &clause;
-        assert_eq!(result.clauses.len(), 3);
-        assert_eq!(&result.clauses[0], &cnf.clauses[0]);
-        assert_eq!(&result.clauses[1], &cnf.clauses[1]);
-        assert_eq!(&result.clauses[2], &clause);
-    }
-
-    #[test]
-    fn clause_and_clause() {
-        let a = Literal::from_var(1);
-        let b = Literal::from_var(2);
-        let c = Literal::from_var(3);
-
-        let left_clause = Clause::from([-a, b]);
-        let right_clause = Clause::from([-b, c]);
-
-        let result: CNF = &left_clause & &right_clause;
-        assert_eq!(result.clauses.len(), 2);
-        assert_eq!(&result.clauses[0], &left_clause);
-        assert_eq!(&result.clauses[1], &right_clause);
     }
 }

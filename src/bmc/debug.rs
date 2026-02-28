@@ -1,11 +1,11 @@
 use super::aiger::AIG;
+use crate::logic::solving::SimpleSolver;
 use crate::logic::VAR_OFFSET;
-
-#[cfg(debug_assertions)] use crate::logic::solving::Solver;
-#[cfg(debug_assertions)] use crate::logic::{CNF, XCNF};
-#[cfg(debug_assertions)] use std::collections::HashSet;
 use std::fmt::Display;
 use std::ops::Deref;
+
+#[cfg(debug_assertions)] use crate::logic::{CNF, XCNF};
+#[cfg(debug_assertions)] use std::collections::HashSet;
 
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -153,7 +153,7 @@ pub fn vars_in_cnf(cnf: &CNF) -> HashSet<i32> {
 #[cfg(debug_assertions)]
 pub fn verify_interpolant_properties(interpolant: &XCNF, A_cnf: CNF, B_cnf: CNF, top_var: i32) {
     // Property 1: A => I, or equivalently (A and ~I) is UNSAT
-    let mut solver_a = Solver::new();
+    let mut solver_a = SimpleSolver::new();
     for _ in 1..=top_var { solver_a.add_var(); }
 
     for clause in &A_cnf { solver_a.add_clause(clause); }
@@ -162,7 +162,7 @@ pub fn verify_interpolant_properties(interpolant: &XCNF, A_cnf: CNF, B_cnf: CNF,
     assert!(!solver_a.solve(), "Property A => I failed: A and ~I is SAT!");
 
     // Property 2: B => ~I, or equivalently (I and B) is UNSAT
-    let mut solver_b = Solver::new();
+    let mut solver_b = SimpleSolver::new();
     for _ in 1..=top_var { solver_b.add_var(); }
 
     for clause in &B_cnf { solver_b.add_clause(clause); }

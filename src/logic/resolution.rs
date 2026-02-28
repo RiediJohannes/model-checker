@@ -147,15 +147,4 @@ impl ResolutionProof {
             debug_assert_eq!((-resolvent_id) as usize, self.intermediate_clauses.len());
         }
     }
-
-    pub fn clear(&mut self) {
-        self.root_clauses.clear();
-        self.intermediate_clauses.clear();
-        self.resolution_steps.clear();
-
-        for p in [Partition::A, Partition::B] {
-            self.clauses_per_partition.entry(p).or_default().clear();
-            self.vars_per_partition.entry(p).or_default().clear();
-        }
-    }
 }

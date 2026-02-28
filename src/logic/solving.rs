@@ -156,6 +156,7 @@ impl Solver {
         self.remote().newVar()
     }
 
+    #[allow(dead_code)]
     pub fn add_vars(&mut self, n: usize) -> Vec<Literal> {
         (0..n).map(|_| self.add_var()).collect()
     }
@@ -219,7 +220,7 @@ impl Solver {
                 .ok_or(InterpolationError::MissingInterpolant(step.left))?;
             let I_R: Literal = *interpolation.mapping.get(&step.right)
                 .ok_or(InterpolationError::MissingInterpolant(step.right))?;
-            debug_assert!(interpolation.mapping.get(&step.resolvent).is_none());
+            debug_assert!(!interpolation.mapping.contains_key(&step.resolvent));
 
             let pivot_locality = proof.var_locality(step.pivot)
                 .ok_or(InterpolationError::MissingVariablePartition(step.pivot.var()))?;
@@ -312,7 +313,7 @@ impl Solver {
         }
 
         let conjunction_lit = conjunction_itp.literal();
-        let combined_clauses = left_itp.to_cnf() & right_itp.to_cnf() & conjunction_itp.to_cnf();
+        let combined_clauses = left_itp.into_cnf() & right_itp.into_cnf() & conjunction_itp.into_cnf();
 
         Interpolant::Formula(XCNF::new(combined_clauses, conjunction_lit))
     }
@@ -364,6 +365,7 @@ impl SimpleSolver {
         self.remote().solve_with_assumptions(&assumptions)
     }
 
+    #[expect(unused)]
     pub fn get_model(&mut self) -> UniquePtr<CxxVector<i8>>
     {
         self.remote().getModel()
@@ -399,14 +401,8 @@ pub enum Interpolant {
     Formula(XCNF),
 }
 impl Interpolant {
-    pub fn clauses(&self) -> &[Clause] {
-        match self {
-            Interpolant::Literal(_) => &[] as &[Clause],
-            Interpolant::Formula(xcnf) => xcnf.formula.clauses.as_slice(),
-        }
-    }
-
-    pub fn to_cnf(self) -> CNF {
+    /// Converts the interpolant into a [CNF], thereby consuming the original interpolant.
+    pub fn into_cnf(self) -> CNF {
         match self {
             Interpolant::Literal(_) => CNF::from(vec![]),
             Interpolant::Formula(xcnf) => xcnf.formula,
@@ -449,7 +445,7 @@ impl InterpolationStorage {
     /// the memory currently available on the system.
     /// ## Arguments
     /// - `proof_size` - The size of the [ResolutionProof] for which an interpolant is computed in terms
-    ///                  of the number of resolution steps in the proof tree.
+    ///   of the number of resolution steps in the proof tree.
     pub fn new(proof_size: usize) -> Result<Self, TryReserveError> {
         let mut interpolant_mapping = HashMap::new();
         interpolant_mapping.try_reserve(2 * proof_size + 1)?;
@@ -469,13 +465,13 @@ impl InterpolationStorage {
         let itp_lit = interpolant.literal();
 
         self.mapping.insert(clause_id, itp_lit);
-        self.clause_database.extend(interpolant.to_cnf().clauses);
+        self.clause_database.extend(interpolant.into_cnf().clauses);
         self.output_literal = itp_lit;
     }
 }
-impl Into<XCNF> for InterpolationStorage {
-    fn into(self) -> XCNF {
-        XCNF::new(self.clause_database.into(), self.output_literal)
+impl From<InterpolationStorage> for XCNF {
+    fn from(storage: InterpolationStorage) -> Self {
+        XCNF::new(storage.clause_database.into(), storage.output_literal)
     }
 }
 
@@ -530,6 +526,7 @@ mod tests {
             }
         }
     }
+    #[allow(clippy::from_over_into)]
     impl Into<XCNF> for Interpolant {
         fn into(self) -> XCNF {
             match self {
