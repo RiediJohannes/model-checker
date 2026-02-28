@@ -663,48 +663,6 @@ mod tests {
         assert_eq!(solver.top_var, 0);
     }
 
-    // #[test]
-    // fn tseitin_or_arbitrary() {
-    //     let (mut solver, I1, I2) = setup_interpolants();
-    //     let initial_top = solver.top_var;
-    //
-    //     // Case 1: I or TRUE
-    //     let I1_or_T = solver.tseitin_or(&I1, TRUE);
-    //     assert_eq!(I1_or_T, TRUE);
-    //     let I2_or_T = solver.tseitin_or(&I2, TRUE);
-    //     assert_eq!(I2_or_T, TRUE);
-    //
-    //     // Case 2: I or FALSE
-    //     let I1_or_F = solver.tseitin_or(&I1, FALSE);
-    //     assert_eq!(I1_or_F, &I1);
-    //     let I2_or_F = solver.tseitin_or(&I2, FALSE);
-    //     assert_eq!(I2_or_F, &I2);
-    //
-    //     // Assert that we did not need any additional tseitin variables for these cases
-    //     assert_eq!(solver.top_var, initial_top);
-    //
-    //     // Case 3: I1 or I2
-    //     let I1_or_I2 = solver.tseitin_or(&I1, &I2);
-    //     assert!(I1_or_I2.contains_all(&I1.formula.clauses));
-    //     assert!(I1_or_I2.contains_all(&I2.formula.clauses));
-    //
-    //     // Check if the tseitin clauses and variable were added correctly
-    //     assert_eq!(I1_or_I2.formula.len(), I1.formula.len() + I2.formula.len() + 3);
-    //     // The now top variable should have become the output literal
-    //     let t = Literal::from_var(solver.top_var);
-    //     assert_eq!(I1_or_I2.out_lit, t);
-    //
-    //     let tseitin_clauses = vec![
-    //         Clause::from([t, -I1.out_lit]),
-    //         Clause::from([t, -I2.out_lit]),
-    //         Clause::from([-t, I1.out_lit, I2.out_lit])
-    //     ];
-    //     assert!(I1_or_I2.contains_all(&tseitin_clauses));
-    //
-    //     // Check: We needed exactly one additional variable, no more
-    //     assert_eq!(solver.top_var, initial_top + 1);
-    // }
-
     #[test]
     fn tseitin_and_trivial() {
         let mut solver = Solver::new();
@@ -728,7 +686,115 @@ mod tests {
     }
 
     #[test]
-    fn tseitin_and_arbitrary() {
+    fn tseitin_or_literals() {
+        let mut solver = Solver::new();
+        let I1 = Interpolant::Literal(solver.add_var());
+        let I2 = Interpolant::Literal(solver.add_var());
+
+        let initial_top = solver.top_var;
+
+        // Case 1: I or TRUE
+        let I1_or_T = solver.tseitin_or(I1.literal(), TRUE);
+        assert_eq!(I1_or_T, TRUE);
+        let I2_or_T = solver.tseitin_or(I2.literal(), TRUE);
+        assert_eq!(I2_or_T, TRUE);
+
+        // Case 2: I or FALSE
+        let I1_or_F = solver.tseitin_or(I1.literal(), FALSE);
+        assert_eq!(I1_or_F, I1);
+        let I2_or_F = solver.tseitin_or(I2.literal(), FALSE);
+        assert_eq!(I2_or_F, I2);
+
+        // Case 3: I and I
+        let I1_or_I1 = solver.tseitin_and(I1.literal(), I1.literal());
+        assert_eq!(I1_or_I1, I1);
+        let I2_or_I2 = solver.tseitin_and(I2.literal(), I2.literal());
+        assert_eq!(I2_or_I2, I2);
+
+        // Assert that we did not need any additional tseitin variables for these cases
+        assert_eq!(solver.top_var, initial_top);
+
+        // Case 4: I1 or I2
+        let I1_or_I2 = solver.tseitin_or(I1.literal(), I2.literal());
+        let I1_or_I2_lit = I1_or_I2.literal();
+        let I1_or_I2_xcnf = match I1_or_I2 {
+            Interpolant::Literal(lit) => panic!("Expected XCNF, got Literal: {:?}", lit),
+            Interpolant::Formula(xcnf) => xcnf,
+        };
+
+        // The now top variable should have become the output literal
+        let t = Literal::from_var(solver.top_var);
+        assert_eq!(I1_or_I2_lit, t);
+
+        // Check if the tseitin clauses and variable were added correctly
+        assert_eq!(I1_or_I2_xcnf.formula.len(), 3);
+        let tseitin_clauses = vec![
+            Clause::from([t, -I1.literal()]),
+            Clause::from([t, -I2.literal()]),
+            Clause::from([-t, I1.literal(), I2.literal()]),
+        ];
+        assert!(I1_or_I2_xcnf.contains_all(&tseitin_clauses));
+
+        // Check: We needed exactly one additional variable, no more
+        assert_eq!(solver.top_var, initial_top + 1);
+    }
+
+    #[test]
+    fn tseitin_and_literals() {
+        let mut solver = Solver::new();
+        let I1 = Interpolant::Literal(solver.add_var());
+        let I2 = Interpolant::Literal(solver.add_var());
+
+        let initial_top = solver.top_var;
+
+        // Case 1: I and TRUE
+        let I1_and_T = solver.tseitin_and(I1.literal(), TRUE);
+        assert_eq!(I1_and_T, I1);
+        let I2_and_T = solver.tseitin_and(I2.literal(), TRUE);
+        assert_eq!(I2_and_T, I2);
+
+        // Case 2: I and FALSE
+        let I1_and_F = solver.tseitin_and(I1.literal(), FALSE);
+        assert_eq!(I1_and_F, FALSE);
+        let I2_and_F = solver.tseitin_and(I2.literal(), FALSE);
+        assert_eq!(I2_and_F, FALSE);
+
+        // Case 3: I and I
+        let I1_and_I1 = solver.tseitin_and(I1.literal(), I1.literal());
+        assert_eq!(I1_and_I1, I1);
+        let I2_and_I2 = solver.tseitin_and(I2.literal(), I2.literal());
+        assert_eq!(I2_and_I2, I2);
+
+        // Assert that we did not need any additional tseitin variables for these cases
+        assert_eq!(solver.top_var, initial_top);
+
+        // Case 4: I1 and I2
+        let I1_and_I2 = solver.tseitin_and(I1.literal(), I2.literal());
+        let I1_and_I2_lit = I1_and_I2.literal();
+        let I1_and_I2_xcnf = match I1_and_I2 {
+            Interpolant::Literal(lit) => panic!("Expected XCNF, got Literal: {:?}", lit),
+            Interpolant::Formula(xcnf) => xcnf,
+        };
+
+        // The now top variable should have become the output literal
+        let t = Literal::from_var(solver.top_var);
+        assert_eq!(I1_and_I2_lit, t);
+
+        // Check if the tseitin clauses and variable were added correctly
+        assert_eq!(I1_and_I2_xcnf.formula.len(), 3);
+        let tseitin_clauses = vec![
+            Clause::from([-t, I1.literal()]),
+            Clause::from([-t, I2.literal()]),
+            Clause::from([-I1.literal(), -I2.literal(), t]),
+        ];
+        assert!(I1_and_I2_xcnf.contains_all(&tseitin_clauses));
+
+        // Check: We needed exactly one additional variable, no more
+        assert_eq!(solver.top_var, initial_top + 1);
+    }
+
+    #[test]
+    fn tseitin_with_interpolants() {
         let (mut solver, I1, I2) = setup_interpolants();
         let I1_xcnf: XCNF = I1.clone().into();
         let I2_xcnf: XCNF = I2.clone().into();
@@ -751,6 +817,7 @@ mod tests {
 
         // Case 3: I1 or I2
         let I1_and_I2 = solver.tseitin_and_interpolants(I1, I2);
+        let I1_and_I2_lit = I1_and_I2.literal();
         let I1_and_I2_xcnf = match I1_and_I2 {
             Interpolant::Literal(lit) => panic!("Expected XCNF, got Literal: {:?}", lit),
             Interpolant::Formula(xcnf) => xcnf,
@@ -763,6 +830,7 @@ mod tests {
         // The now top variable should have become the output literal
         let t = Literal::from_var(solver.top_var);
         assert_eq!(I1_and_I2_xcnf.out_lit, t);
+        assert_eq!(I1_and_I2_lit, t);
 
         let tseitin_clauses = vec![
             Clause::from([-t, I1_xcnf.out_lit]),
